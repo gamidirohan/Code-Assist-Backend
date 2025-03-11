@@ -1,10 +1,11 @@
+import time
 import os
 import dotenv
 import json
-import base64
 import httpx
 from fastapi import FastAPI, Request
 from mistralai import Mistral, ImageURLChunk, TextChunk
+from mistralai.models.sdkerror import SDKError
 
 dotenv.load_dotenv()
 
@@ -26,6 +27,7 @@ async def extract_route(request: Request):
     for base64_data in imageDataList:
         max_retries = 3
         attempt = 0
+        backoff_time = 1  # Initial backoff time in seconds
         while attempt < max_retries:
             try:
                 image_response = client.ocr.process(
@@ -59,6 +61,18 @@ async def extract_route(request: Request):
                 attempt += 1
                 if attempt == max_retries:
                     raise e
+                time.sleep(backoff_time)
+            except SDKError as e:
+                if "Requests rate limit exceeded" in str(e):
+                    attempt += 1
+                    if attempt == max_retries:
+                        raise e
+                    time.sleep(backoff_time)
+                    backoff_time *= 2  # Exponential backoff
+                else:
+                    raise e
+
+        time.sleep(1)  # Delay to respect the rate limit of 1 request per second
 
     print("OCR Results:", json.dumps(results, indent=4))  # Print the OCR results in the terminal
     return results
