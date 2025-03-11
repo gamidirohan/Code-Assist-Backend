@@ -32,7 +32,7 @@ def process_images(imageDataList, language):
                 prompt_text = (
                     f"This image's OCR in markdown:\n<BEGIN_IMAGE_OCR>\n{image_ocr_markdown}\n<END_IMAGE_OCR>.\n"
                     f"Language expected: {language}\n"
-                    "Convert this into a sensible structured json response, strictly JSON with no extra commentary."
+                    "Extract and convert the given text into a well-structured JSON object. Ensure proper formatting, correct parsing of lists, and maintain the integrity of the original content. Strictly return a JSON object with no additional commentary or explanations."
                 )
 
                 chat_response = client.chat.complete(
