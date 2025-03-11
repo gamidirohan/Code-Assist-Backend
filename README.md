@@ -1,4 +1,4 @@
-# Interview Coder Backend
+# Code Assist Backend
 
 This project is a backend service for extracting text from images using Mistral OCR and Flask.
 
