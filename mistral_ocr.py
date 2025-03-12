@@ -2,6 +2,7 @@ import time
 import os
 import dotenv
 import json
+import uvicorn
 import httpx
 from fastapi import FastAPI, Request, HTTPException
 from mistralai import Mistral, ImageURLChunk, TextChunk
@@ -129,5 +130,4 @@ async def generate_route(request: Request):
 
 
 if __name__ == "__main__":
-    import uvicorn
     uvicorn.run("mistral_ocr:app", host="0.0.0.0", port=3000)
