@@ -8,7 +8,6 @@ This is a Python-based backend that uses Mistral OCR to extract text from images
 .env
 backend.js
 backend.py
-eng.traineddata
 leetcode_test.png
 mistral_ocr.py
 mistral_temp.py
