@@ -1,6 +1,6 @@
 # Code Assist Backend
 
-This project is a backend service for extracting text from images using Mistral OCR and Flask.
+This is a Python-based backend that uses Mistral OCR to extract text from images. It communicates with a front-end through POST requests over HTTP.
 
 ## Project Structure
 
@@ -17,7 +17,23 @@ __pycache__/
 myenv/
 ```
 
-## Setup
+## Endpoints
+
+**POST /api/extract**  
+- Input: JSON with "imageDataList" (array of base64-encoded images) and "language" (optional).  
+- Processing: Performs OCR on the first base64 image and returns extracted text.  
+- Response: JSON with the recognized text.
+
+**POST /api/generate**  
+- Input: JSON with "problemInfo" (text of the coding problem) and "language" (optional).  
+- Processing: Generates a code solution, explanation, and complexity details.  
+- Response: JSON with "code" as the generated solution.
+
+## .env File
+MISTRAL_API_KEY=<YOUR_MISTRAL_API_KEY>  
+GROQ_API_KEY=<YOUR_GROQ_API_KEY>
+
+## Setup & Usage
 
 1. Clone the repository:
     ```sh
@@ -37,40 +53,13 @@ myenv/
     pip install -r requirements.txt
     ```
 
-4. Create a `.env` file and add your Mistral API key:
-    ```
-    MISTRAL_API_KEY=your_api_key_here
-    ```
-
-## Running the Application
-
-1. Start the Flask server:
+4. Provide valid environment variables in `.env`:
     ```sh
-    python mistral_ocr.py
+    MISTRAL_API_KEY=your_api_key_here
+    GROQ_API_KEY=your_groq_api_key_here
     ```
 
-2. The server will be running at `http://127.0.0.1:5000`.
-
-## API Endpoints
-
-### POST /api/extract
-
-- **Description**: Extracts text from base64-encoded images.
-- **Request Body**:
-    ```json
-    {
-        "imageDataList": ["base64_image_data_1", "base64_image_data_2"],
-        "language": "python"
-    }
-    ```
-- **Response**:
-    ```json
-    [
-        {
-            "extracted_text": "..."
-        }
-    ]
-    ```
+5. Run `python mistral_ocr.py` to start the service.
 
 ## Pushing Changes to GitHub
 
