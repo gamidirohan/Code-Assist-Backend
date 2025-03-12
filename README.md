@@ -61,6 +61,13 @@ GROQ_API_KEY=<YOUR_GROQ_API_KEY>
 
 5. Run `python mistral_ocr.py` to start the service.
 
+## Cloning from GitHub
+Clone the repo directly:
+```sh
+git clone https://github.com/gamidirohan/Code-Assist-Backend.git
+cd Code-Assist-Backend
+```
+
 ## Pushing Changes to GitHub
 
 1. Add changes to the staging area:
