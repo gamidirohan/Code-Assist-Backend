@@ -108,19 +108,7 @@ async def generate_route(request: Request):
     
     language = body.get("language", "python")
     prompt_text = (
-        f"Generate a complete solution in {language}.\n"
-        "Ensure the output is structured, readable, and formatted properly with clear headings.\n"
-        "Format the response as follows:\n\n"
-        "Explanation:\n"
-        "{explanation}\n\n"
-        "Code:\n"
-        "```{language}\n{code}\n```\n\n"
-        "Time and Space Complexity:\n"
-        "Time Complexity: {time_complexity}\n"
-        "Space Complexity: {space_complexity}\n"
-        "Explanation: {complexity_explanation}\n\n"
-        f"Problem Information:\n{body['problemInfo']}\n"
-        "Do NOT return the output as a raw JSON object. Instead, format it as a structured, readable response."
+        f"Generate a complete solution in {language}. Ensure the output is structured, readable, and formatted properly with clear headings. Return a JSON object with one field 'response' containing the entire solution. Explanation: {{explanation}} Code: ```{language}{{code}}``` Time Complexity: {{time_complexity}} Space Complexity: {{space_complexity}} Explanation: {{complexity_explanation}} Problem Information: {body['problemInfo']} Provide no additional commentary."
     )
 
 
