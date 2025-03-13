@@ -109,7 +109,7 @@ async def generate_route(request: Request):
     
     language = body.get("language", "python")
     prompt_text = (
-        f"Generate a complete solution in {language}. Ensure the output is structured, readable, and formatted properly with clear headings. Return a JSON object with one field 'response' containing the entire solution. Explanation: {{explanation}} Code: ```{language}{{code}}``` Time Complexity: {{time_complexity}} Space Complexity: {{space_complexity}} Explanation: {{complexity_explanation}} Problem Information: {body['problemInfo']} Provide no additional commentary."
+        f"Generate a complete solution in {language}. Ensure the output is structured, readable, and formatted properly with clear headings. Return a JSON object containing the entire solution. Explanation: {{explanation(3 phases, Brute force, Better (if exists), and most Optimal, all in short paragraphs (don't give heading for each paragraph, just one paragraph each one after the other))}} Code: ```{language}{{code}}``` Time Complexity: {{time_complexity}} Space Complexity: {{space_complexity}} Explanation: {{complexity_explanation}} Problem Information: {body['problemInfo']} Provide no additional commentary."
     )
 
 
@@ -130,4 +130,4 @@ async def generate_route(request: Request):
 
 
 if __name__ == "__main__":
-    uvicorn.run("mistral_ocr:app", host="0.0.0.0", port=3000)
+    uvicorn.run("code-assist-backend:app", host="0.0.0.0", port=3000)
