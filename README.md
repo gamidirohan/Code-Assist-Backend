@@ -6,13 +6,11 @@ This is a Python-based backend that uses Mistral OCR to extract text from images
 
 ```
 .env
-backend.js
-backend.py
+.gitignore
 leetcode_test.png
-mistral_ocr.py
-mistral_temp.py
-package.json
-__pycache__/
+code-assist-backend.py
+README.md
+requirements.txt
 myenv/
 ```
 
@@ -36,7 +34,7 @@ GROQ_API_KEY=<YOUR_GROQ_API_KEY>
 
 1. Clone the repository:
     ```sh
-    git clone <repository-url>
+    git clone https://github.com/gamidirohan/Code-Assist-Backend.git
     cd interview-coder_backend
     ```
 
@@ -83,8 +81,6 @@ cd Code-Assist-Backend
     ```sh
     git push origin main
     ```
-
-Replace `<repository-url>` with the URL of your GitHub repository.
 
 ## License
 
