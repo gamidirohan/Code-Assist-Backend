@@ -36,7 +36,7 @@ GROQ_API_KEY=<YOUR_GROQ_API_KEY>
 
 1. Clone the repository:
     ```sh
-    git clone <repository-url>
+    git clone https://github.com/gamidirohan/Code-Assist-Backend.git
     cd interview-coder_backend
     ```
 
