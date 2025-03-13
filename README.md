@@ -84,8 +84,6 @@ cd Code-Assist-Backend
     git push origin main
     ```
 
-Replace `<repository-url>` with the URL of your GitHub repository.
-
 ## License
 
 This project is licensed under the MIT License.
