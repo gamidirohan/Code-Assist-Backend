@@ -111,8 +111,6 @@ async def generate_route(request: Request):
     prompt_text = (
         f"Generate a complete solution in {language}. Ensure the output is structured, readable, and formatted properly with clear headings. Return a JSON object containing the entire solution. Explanation: {{explanation(3 phases, Brute force, Better (if exists), and most Optimal, all in short paragraphs (don't give heading for each paragraph, just one paragraph each one after the other))}} Code: ```{language}{{code}}``` Time Complexity: {{time_complexity}} Space Complexity: {{space_complexity}} Explanation: {{complexity_explanation}} Problem Information: {body['problemInfo']} Provide no additional commentary."
     )
-
-
     
     try:
         # Call the ChatGroq LLM
