@@ -85,3 +85,8 @@ cd Code-Assist-Backend
 ## License
 
 This project is licensed under the MIT License.
+
+
+
+pyinstaller
+auto-py-to-exe

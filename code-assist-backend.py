@@ -15,7 +15,7 @@ MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 client = Mistral(api_key=MISTRAL_API_KEY)
 
 groq_llm = ChatGroq(
-    model_name="qwen-2.5-coder-32b",
+    model_name="deepseek-r1-distill-llama-70b",
     temperature=0.0,
     model_kwargs={"response_format": {"type": "json_object"}},
     groq_api_key=os.getenv("GROQ_API_KEY")
@@ -52,7 +52,7 @@ async def extract_route(request: Request):
             prompt_text = (
                 f"This image's OCR in markdown:\n<BEGIN_IMAGE_OCR>\n{image_ocr_md}\n<END_IMAGE_OCR>.\n"
                 f"Language expected: {language}\n"
-                "Extract and convert the given text into a well-structured JSON object to Strictly return a JSON object with 'problemInfo' and 'language' as the only two keys. 'problemInfo' should contain 'title', 'problem' and 'code' (These should just be Strings, not structured as JSON). Ensure proper formatting, correct parsing of lists, and maintain the integrity of the original content. Strictly return a JSON object with no additional commentary or explanations."
+                "Extract and convert the given text into a well-structured JSON object. Strictly return a JSON object with 'problemInfo' and 'language' as the only two keys. The value of 'problemInfo' must be a string that contains a JSON-like structure with 'title', 'problem', and 'code' as its components. These components should be simple strings, not nested JSON objects. Ensure proper formatting, correct parsing of lists, and maintain the integrity of the original content. The entire response must be a valid JSON object with no additional text or explanations."
             )
             chat_response = client.chat.complete(
                 model="pixtral-12b-latest",
@@ -109,7 +109,7 @@ async def generate_route(request: Request):
     
     language = body.get("language", "python")
     prompt_text = (
-        f"Generate a complete solution in {language}. Ensure the output is structured, readable, and formatted properly with clear headings. Return a JSON object containing the entire solution. Explanation: {{explanation(3 phases, Brute force, Better (if exists), and most Optimal, all in short paragraphs (don't give heading for each paragraph, just one paragraph each one after the other))}} Code: ```{language}{{code}}``` Time Complexity: {{time_complexity}} Space Complexity: {{space_complexity}} Explanation: {{complexity_explanation}} Problem Information: {body['problemInfo']} Provide no additional commentary."
+        f"Generate a complete solution in {language}. Return a JSON object with 'Explanation', 'Code', 'Time Complexity', 'Space Complexity', 'complexity_explanation', and 'Problem Information' keys. 'Explanation' should cover brute force, better, and optimal approaches in short paragraphs. 'Code' should be formatted within triple backticks. 'Time Complexity' and 'Space Complexity' should be in Big O notation. 'complexity_explanation' should explain the complexities. 'Problem Information' should include the title and problem description. Ensure proper JSON formatting and no additional commentary. Problem Information: {body['problemInfo']}."
     )
     
     try:
