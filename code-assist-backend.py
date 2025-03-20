@@ -126,6 +126,15 @@ async def generate_route(request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+import socket
 
 if __name__ == "__main__":
+    import uvicorn
+
+    # Get the local IP address of the device
+    hostname = socket.gethostname()
+    local_ip = socket.gethostbyname(hostname)
+
+    print(f"Backend is running on: http://{local_ip}:3000")
+
     uvicorn.run("code-assist-backend:app", host="0.0.0.0", port=3000)
