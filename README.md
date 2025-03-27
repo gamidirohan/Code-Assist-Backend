@@ -56,7 +56,7 @@ GROQ_API_KEY=<YOUR_GROQ_API_KEY>
     GROQ_API_KEY=your_groq_api_key_here
     ```
 
-5. Run `code-assist-backend.py` to start the service.
+5. Run `python code-assist-backend.py` to start the service.
 
 ## Cloning from GitHub
 Clone the repo directly:
