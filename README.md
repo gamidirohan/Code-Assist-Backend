@@ -41,7 +41,7 @@ GROQ_API_KEY=<YOUR_GROQ_API_KEY>
 2. Create and activate a virtual environment:
     ```sh
     python -m venv myenv
-    source myenv/Scripts/activate  # On Windows
+    ./myenv/Scripts/activate  # On Windows
     source myenv/bin/activate      # On Unix or MacOS
     ```
 
