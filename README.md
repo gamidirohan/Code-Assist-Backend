@@ -81,6 +81,15 @@ cd Code-Assist-Backend
     ```sh
     git push origin main
     ```
+## Hosting
+Host it on Render:
+For the absolute easiest deployment with the least configuration:
+
+Create an account on Render
+Connect your GitHub repository
+Select "Web Service"
+Set build command: pip install -r requirements.txt
+Set start command: python code-assist-backend.py
 
 ## License
 
