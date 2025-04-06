@@ -38,45 +38,84 @@ async def extract_route(request: Request):
 
     base64_data = imageDataList[0]  # Only process the first image
 
-    max_retries = 3
+    max_retries = 5  # Increased from 3
     attempt = 0
-    backoff_time = 1  # Initial backoff time in seconds
+    backoff_time = 2  # Increased from 1
 
     while attempt < max_retries:
         try:
-            image_response = client.ocr.process(
-                document=ImageURLChunk(image_url=f"data:image/jpeg;base64,{base64_data}"),
-                model="mistral-ocr-latest"
-            )
-            image_ocr_md = image_response.pages[0].markdown
+            # First try OCR
+            try:
+                image_response = client.ocr.process(
+                    document=ImageURLChunk(image_url=f"data:image/jpeg;base64,{base64_data}"),
+                    model="mistral-ocr-latest"
+                )
+                image_ocr_md = image_response.pages[0].markdown
+            except SDKError as ocr_err:
+                if "Requests rate limit exceeded" in str(ocr_err):
+                    print(f"OCR rate limit exceeded, attempt {attempt+1}/{max_retries}")
+                    attempt += 1
+                    if attempt == max_retries:
+                        return {
+                            "problemInfo": "Unable to process image due to API rate limits. Please try again later.",
+                            "language": language
+                        }
+                    time.sleep(backoff_time)
+                    backoff_time *= 2
+                    continue
+                else:
+                    raise ocr_err
+            
+            # Then try chat completion
             prompt_text = (
                 f"This image's OCR in markdown:\n<BEGIN_IMAGE_OCR>\n{image_ocr_md}\n<END_IMAGE_OCR>.\n"
                 f"Language expected: {language}\n"
                 "Return a valid, properly formatted JSON object with exactly two root keys: 'problemInfo' and 'language'. The 'problemInfo' key should contain a simple string with the problem information. The 'language' key should contain a string with the programming language. Do not include nested JSON objects or arrays. Ensure all quotes are properly escaped. Return only the JSON object with no additional text."
             )
-            chat_response = client.chat.complete(
-                model="pixtral-12b-latest",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            ImageURLChunk(image_url=f"data:image/jpeg;base64,{base64_data}"),
-                            TextChunk(text=prompt_text)
-                        ],
-                    },
-                ],
-                response_format={"type": "json_object"},
-                temperature=0
-            )
+            
+            try:
+                chat_response = client.chat.complete(
+                    model="pixtral-12b-latest",
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                ImageURLChunk(image_url=f"data:image/jpeg;base64,{base64_data}"),
+                                TextChunk(text=prompt_text)
+                            ],
+                        },
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0
+                )
+            except SDKError as chat_err:
+                if "Requests rate limit exceeded" in str(chat_err):
+                    print(f"Chat rate limit exceeded, attempt {attempt+1}/{max_retries}")
+                    attempt += 1
+                    if attempt == max_retries:
+                        if 'image_ocr_md' in locals():
+                            return {
+                                "problemInfo": f"API rate limited. Raw OCR text: {image_ocr_md[:500]}...",
+                                "language": language
+                            }
+                        else:
+                            return {
+                                "problemInfo": "Unable to process image due to API rate limits. Please try again later.",
+                                "language": language
+                            }
+                    time.sleep(backoff_time)
+                    backoff_time *= 2
+                    continue
+                else:
+                    raise chat_err
+            
             try:
                 response_dict = json.loads(chat_response.choices[0].message.content)
                 return response_dict
             except json.JSONDecodeError as json_err:
                 print(f"JSON decode error: {json_err}")
                 print(f"Raw content: {chat_response.choices[0].message.content}")
-                # Create a fallback response
                 fallback_content = chat_response.choices[0].message.content
-                # Attempt to extract usable text even if JSON is malformed
                 return {
                     "problemInfo": f"Error parsing response. Raw content: {fallback_content[:500]}...",
                     "language": language
@@ -85,20 +124,15 @@ async def extract_route(request: Request):
         except (httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError) as e:
             attempt += 1
             if attempt == max_retries:
-                raise e
+                raise HTTPException(status_code=503, detail="Network error when connecting to API services.")
             time.sleep(backoff_time)
+            backoff_time *= 2
 
-        except SDKError as e:
-            if "Requests rate limit exceeded" in str(e):
-                attempt += 1
-                if attempt == max_retries:
-                    raise e
-                time.sleep(backoff_time)
-                backoff_time *= 2  # Exponential backoff
-            else:
-                raise e
+        except Exception as e:
+            print(f"Unexpected error: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
-    raise HTTPException(status_code=500, detail="Failed to process image.")
+    raise HTTPException(status_code=500, detail="Failed to process image after maximum retries.")
 
 @app.post("/api/generate")
 async def generate_route(request: Request):
