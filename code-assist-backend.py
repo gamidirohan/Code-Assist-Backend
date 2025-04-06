@@ -52,7 +52,7 @@ async def extract_route(request: Request):
             prompt_text = (
                 f"This image's OCR in markdown:\n<BEGIN_IMAGE_OCR>\n{image_ocr_md}\n<END_IMAGE_OCR>.\n"
                 f"Language expected: {language}\n"
-                "Extract and convert the given text into a well-structured JSON object. Strictly return a JSON object with 'problemInfo' and 'language' as the only two keys. The value of 'problemInfo' must be a string that contains a JSON-like structure with 'title', 'problem', and 'code' as its components. These components should be simple strings, not nested JSON objects. Ensure proper formatting, correct parsing of lists, and maintain the integrity of the original content. The entire response must be a valid JSON object with no additional text or explanations."
+                "Return a valid, properly formatted JSON object with exactly two root keys: 'problemInfo' and 'language'. The 'problemInfo' key should contain a simple string with the problem information. The 'language' key should contain a string with the programming language. Do not include nested JSON objects or arrays. Ensure all quotes are properly escaped. Return only the JSON object with no additional text."
             )
             chat_response = client.chat.complete(
                 model="pixtral-12b-latest",
@@ -68,8 +68,19 @@ async def extract_route(request: Request):
                 response_format={"type": "json_object"},
                 temperature=0
             )
-            response_dict = json.loads(chat_response.choices[0].message.content)
-            return response_dict  # Return a single JSON object
+            try:
+                response_dict = json.loads(chat_response.choices[0].message.content)
+                return response_dict
+            except json.JSONDecodeError as json_err:
+                print(f"JSON decode error: {json_err}")
+                print(f"Raw content: {chat_response.choices[0].message.content}")
+                # Create a fallback response
+                fallback_content = chat_response.choices[0].message.content
+                # Attempt to extract usable text even if JSON is malformed
+                return {
+                    "problemInfo": f"Error parsing response. Raw content: {fallback_content[:500]}...",
+                    "language": language
+                }
 
         except (httpx.RemoteProtocolError, httpx.ReadError, httpx.ConnectError) as e:
             attempt += 1
