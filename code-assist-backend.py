@@ -70,9 +70,10 @@ async def extract_route(request: Request):
             prompt_text = (
                 f"This image's OCR in markdown:\n<BEGIN_IMAGE_OCR>\n{image_ocr_md}\n<END_IMAGE_OCR>.\n"
                 f"Language expected: {language}\n"
-                "Return a valid, properly formatted JSON object with exactly two root keys: 'problemInfo' and 'language'. The 'problemInfo' key should contain a simple string with the problem information. The 'language' key should contain a string with the programming language. Do not include nested JSON objects or arrays. Ensure all quotes are properly escaped. Return only the JSON object with no additional text."
+                "Carefully extract ALL information from the image, including the complete problem statement, examples, constraints, and any other details. Pay special attention to code examples, input/output formats, and edge cases mentioned or implied in the problem. Take your time to think all the possible edge cases.\n\n"
+                "Return a valid, properly formatted JSON object with exactly two root keys: 'problemInfo' and 'language'. The 'problemInfo' key should contain a detailed string with ALL the problem information including examples and constraints exactly as given in the image. The 'language' key should contain a string with the programming language. Do not include nested JSON objects or arrays. Ensure all quotes are properly escaped. Return only the JSON object with no additional text."
             )
-            
+
             try:
                 chat_response = client.chat.complete(
                     model="pixtral-12b-latest",
