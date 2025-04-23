@@ -1,6 +1,14 @@
 # Code Assist Backend
 
-This is a Python-based backend that uses Mistral OCR to extract text from images. It communicates with a front-end through POST requests over HTTP.
+This is a Python-based backend that uses Mistral OCR to extract text from coding problem images and generates structured solutions using LLMs. It communicates with a front-end through POST requests over HTTP.
+
+## Features
+
+- **Advanced OCR**: Uses Mistral OCR to extract complete problem details from images
+- **Structured Code Generation**: Leverages Instructor and Groq API for reliable JSON-structured outputs
+- **Multiple Model Support**: Falls back to alternative models if primary generation fails
+- **Rate Limit Handling**: Implements exponential backoff for API rate limits
+- **Robust Error Handling**: Gracefully handles errors at every step of the process
 
 ## Project Structure
 
@@ -16,18 +24,28 @@ myenv/
 
 ## Endpoints
 
-**POST /api/extract**  
-- Input: JSON with "imageDataList" (array of base64-encoded images) and "language" (optional).  
-- Processing: Performs OCR on the first base64 image and returns extracted text.  
-- Response: JSON with the recognized text.
+**POST /api/extract**
+- Input: JSON with "imageDataList" (array of base64-encoded images) and "language" (optional).
+- Processing: Performs OCR on all provided images, merges content, and extracts a complete problem statement.
+- Response: JSON with the complete problem information and language.
 
-**POST /api/generate**  
-- Input: JSON with "problemInfo" (text of the coding problem) and "language" (optional).  
-- Processing: Generates a code solution, explanation, and complexity details.  
-- Response: JSON with "code" as the generated solution.
+**POST /api/generate**
+- Input: JSON with "problemInfo" (text of the coding problem) and "language" (optional).
+- Processing: Generates a structured solution with multiple approaches, code implementation, and complexity analysis.
+- Response: JSON with the following structure:
+  ```json
+  {
+    "Problem Information": "Summary of the problem",
+    "Explanation": "Detailed explanation of brute force, better, and optimal approaches",
+    "Code": "Implementation in the specified language",
+    "Time Complexity": "Big O analysis of time complexity",
+    "Space Complexity": "Big O analysis of space complexity",
+    "complexity_explanation": "Detailed explanation of both time and space complexity"
+  }
+  ```
 
 ## .env File
-MISTRAL_API_KEY=<YOUR_MISTRAL_API_KEY>  
+MISTRAL_API_KEY=<YOUR_MISTRAL_API_KEY>
 GROQ_API_KEY=<YOUR_GROQ_API_KEY>
 
 ## Setup & Usage
@@ -49,6 +67,12 @@ GROQ_API_KEY=<YOUR_GROQ_API_KEY>
     ```sh
     pip install -r requirements.txt
     ```
+
+   Key dependencies include:
+   - `fastapi` and `uvicorn` for the web server
+   - `mistralai` for OCR processing
+   - `langchain-groq` and `groq` for LLM integration
+   - `instructor` for structured JSON generation
 
 4. Provide valid environment variables in `.env`:
     ```sh
@@ -91,11 +115,12 @@ Select "Web Service"
 Set build command: pip install -r requirements.txt
 Set start command: python code-assist-backend.py
 
+## Models Used
+
+- **OCR Processing**: Mistral OCR (pixtral-12b-latest)
+- **Primary Code Generation**: Llama 3.1 8B Instant (llama-3.1-8b-instant)
+- **Fallback Code Generation**: DeepSeek R1 (deepseek-r1-distill-llama-70b)
+
 ## License
 
 This project is licensed under the MIT License.
-
-
-
-pyinstaller
-auto-py-to-exe
