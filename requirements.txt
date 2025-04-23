@@ -4,3 +4,6 @@ mistralai
 langchain-groq
 uvicorn
 python-dotenv
+instructor
+groq
+pydantic>=2.8.0
