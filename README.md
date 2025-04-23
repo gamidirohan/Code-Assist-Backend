@@ -123,4 +123,13 @@ Set start command: python code-assist-backend.py
 
 ## License
 
-This project is licensed under the MIT License.
+This project is licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+
+This means:
+- ✅ You can use this for personal, non-commercial purposes
+- ✅ You can modify and share this code
+- ✅ You must give appropriate credit to Rohan Gamidi
+- ❌ You cannot use this commercially
+- ❌ You cannot claim this as your own work
+
+For more details, see the [LICENSE](LICENSE) file or visit the [Creative Commons website](https://creativecommons.org/licenses/by-nc/4.0/).
