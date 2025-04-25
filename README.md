@@ -1,10 +1,11 @@
 # Code Assist Backend
 
-This is a Python-based backend that uses Mistral OCR to extract text from coding problem images and generates structured solutions using LLMs. It communicates with a front-end through POST requests over HTTP.
+This is a Python-based backend that uses EasyOCR to extract text from coding problem images and generates structured solutions using LLMs. It communicates with a front-end through POST requests over HTTP.
 
 ## Features
 
-- **Advanced OCR**: Uses Mistral OCR to extract complete problem details from images
+- **Local OCR Processing**: Uses EasyOCR for reliable, local text extraction from images
+- **Fallback OCR**: Can use Mistral OCR as a backup if needed
 - **Structured Code Generation**: Leverages Instructor and Groq API for reliable JSON-structured outputs
 - **Multiple Model Support**: Falls back to alternative models if primary generation fails
 - **Rate Limit Handling**: Implements exponential backoff for API rate limits
@@ -117,7 +118,8 @@ Set start command: python code-assist-backend.py
 
 ## Models Used
 
-- **OCR Processing**: Mistral OCR (pixtral-12b-latest)
+- **OCR Processing**: EasyOCR (local processing)
+- **Fallback OCR**: Mistral OCR (pixtral-12b-latest)
 - **Primary Code Generation**: Llama 3.1 8B Instant (llama-3.1-8b-instant)
 - **Fallback Code Generation**: DeepSeek R1 (deepseek-r1-distill-llama-70b)
 

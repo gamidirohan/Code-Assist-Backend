@@ -5,10 +5,24 @@ import json
 import uvicorn
 import httpx
 import uuid
+import base64
+import io
+import numpy as np
+from PIL import Image
 from fastapi import FastAPI, Request, HTTPException
 from mistralai import Mistral, ImageURLChunk
 from mistralai.models.sdkerror import SDKError
 from langchain_groq import ChatGroq
+
+# Import EasyOCR for local OCR processing
+try:
+    import easyocr
+    EASYOCR_AVAILABLE = True
+    # Initialize the EasyOCR reader (this will download models on first run)
+    reader = easyocr.Reader(['en'])
+except ImportError:
+    EASYOCR_AVAILABLE = False
+    reader = None
 
 # Import Instructor (successor to Outlines) for structured generation
 # Note: If instructor is not installed, we'll handle it gracefully
@@ -50,6 +64,62 @@ dotenv.load_dotenv()
 
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 client = Mistral(api_key=MISTRAL_API_KEY)
+
+def process_image_with_easyocr(base64_data):
+    """
+    Process an image using EasyOCR instead of Mistral's OCR service.
+
+    Args:
+        base64_data: Base64 encoded image data
+
+    Returns:
+        Extracted text from the image
+    """
+    try:
+        # Decode base64 image
+        image_data = base64.b64decode(base64_data)
+        image = Image.open(io.BytesIO(image_data))
+
+        # Convert to numpy array for EasyOCR
+        image_np = np.array(image)
+
+        # Use EasyOCR to extract text
+        results = reader.readtext(image_np)
+
+        # Combine results into a single string, preserving layout
+        lines = []
+        current_y = -1
+        current_line = []
+
+        # Sort by y-coordinate to maintain reading order
+        sorted_results = sorted(results, key=lambda x: (x[0][0][1] + x[0][2][1]) / 2)
+
+        for detection in sorted_results:
+            bbox, text, _ = detection
+            # Calculate center y-coordinate of this text box
+            center_y = (bbox[0][1] + bbox[2][1]) / 2
+
+            # If this is a new line (y position is significantly different)
+            if current_y == -1 or abs(center_y - current_y) > 20:  # Threshold for new line
+                if current_line:
+                    lines.append(" ".join(current_line))
+                current_line = [text]
+                current_y = center_y
+            else:
+                # Same line, append with space
+                current_line.append(text)
+
+        # Add the last line if it exists
+        if current_line:
+            lines.append(" ".join(current_line))
+
+        # Join all lines with newlines
+        extracted_text = "\n".join(lines)
+        return extracted_text
+
+    except Exception as e:
+        print(f"Error processing image with EasyOCR: {str(e)}")
+        raise e
 
 # Configure the LLM for code generation
 groq_llm = ChatGroq(
@@ -102,11 +172,20 @@ async def extract_route(request: Request):
             try:
                 # Run OCR on this image
                 try:
-                    image_response = client.ocr.process(
-                        document=ImageURLChunk(image_url=f"data:image/jpeg;base64,{base64_data}"),
-                        model="mistral-ocr-latest"
-                    )
-                    image_ocr_md = image_response.pages[0].markdown
+                    # Check if EasyOCR is available
+                    if EASYOCR_AVAILABLE and reader is not None:
+                        # Use EasyOCR for local processing
+                        print(f"Processing image {i+1} with EasyOCR")
+                        image_ocr_md = process_image_with_easyocr(base64_data)
+                    else:
+                        # Fall back to Mistral OCR if EasyOCR is not available
+                        print(f"EasyOCR not available, falling back to Mistral OCR for image {i+1}")
+                        image_response = client.ocr.process(
+                            document=ImageURLChunk(image_url=f"data:image/jpeg;base64,{base64_data}"),
+                            model="mistral-ocr-latest"
+                        )
+                        image_ocr_md = image_response.pages[0].markdown
+
                     print(f"Successfully processed image {i+1}")
                     all_ocr_results.append({
                         "index": i,
@@ -116,6 +195,7 @@ async def extract_route(request: Request):
                     image_processed = True
 
                 except SDKError as ocr_err:
+                    # This will only happen if we're using Mistral OCR
                     if "Requests rate limit exceeded" in str(ocr_err):
                         rate_limit_attempt += 1
                         wait_time = initial_wait_time * (2 ** (rate_limit_attempt - 1))  # Exponential backoff
