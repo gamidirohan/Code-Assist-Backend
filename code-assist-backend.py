@@ -4,6 +4,7 @@ import dotenv
 import json
 import uvicorn
 import httpx
+import uuid
 from fastapi import FastAPI, Request, HTTPException
 from mistralai import Mistral, ImageURLChunk
 from mistralai.models.sdkerror import SDKError
@@ -184,6 +185,10 @@ async def extract_route(request: Request):
     chat_rate_limit_attempt = 0
     chat_completed = False
 
+    # Generate a unique request ID for tracking
+    request_id = str(uuid.uuid4())[:8]
+    print(f"Request ID: {request_id} - Starting OCR processing")
+
     # Prepare the prompt for chat completion
     prompt_text = (
         f"I have OCR text from multiple screenshots of a coding problem:\n<BEGIN_COMBINED_OCR>\n{combined_ocr_text}\n<END_COMBINED_OCR>\n"
@@ -191,12 +196,14 @@ async def extract_route(request: Request):
         "These screenshots are multiple captures of a long problem and likely contain overlapping content. "
         "Your task is to create a COMPLETE and EXACT reproduction of the problem statement by carefully analyzing all the text.\n\n"
         "IMPORTANT INSTRUCTIONS:\n"
-        "1. Extract EVERY detail from the screenshots, including, title, full description, ALL examples, ALL constraints, and ANY follow-up questions\n"
-        "2. Preserve the EXACT formatting, including newlines, indentation, and code blocks\n"
-        "3. Include ALL code snippets exactly as shown, including comments, class definitions, and test cases (if any)\n"
-        "4. Pay special attention to numerical details like constraints (e.g., array size limits, value ranges)\n"
-        "5. Merge overlapping content carefully to avoid duplication\n\n"
-        "CRITICAL: Do not miss ANY information from the original problem. Include the description, all examples, all constraints including value ranges, and any follow-up questions about space/time complexity.\n\n"
+        "1. Start with the EXACT problem number and title (e.g., '141. Linked List Cycle' or 'Next Permutation')\n"
+        "2. Extract EVERY detail from the screenshots, including full description, ALL examples, ALL constraints, and ANY follow-up questions\n"
+        "3. Preserve the EXACT formatting, including newlines, indentation, and code blocks\n"
+        "4. Include ALL code snippets exactly as shown, including comments, class definitions, and test cases (if any)\n"
+        "5. Pay special attention to numerical details like constraints (e.g., array size limits, value ranges)\n"
+        "6. Merge overlapping content carefully to avoid duplication\n\n"
+        "CRITICAL: Do not miss ANY information from the original problem. Include the problem number, title, description, all examples, all constraints including value ranges, and any follow-up questions about space/time complexity.\n\n"
+        "CRITICAL: Do not make up or change ANY content. If you're unsure about something, include the original OCR text for that part.\n\n"
         "Return a valid, properly formatted JSON object with exactly two root keys: 'problemInfo' and 'language'. "
         "The 'problemInfo' key should contain a detailed string with the COMPLETE problem information EXACTLY as given in the images. "
         "The 'language' key should contain a string with the programming language. "
@@ -229,30 +236,61 @@ async def extract_route(request: Request):
 
                 # Try to parse the JSON response
                 try:
+                    print(f"Request ID: {request_id} - Parsing JSON response")
                     response_dict = json.loads(response_content)
 
                     # Validate that the response has the required keys
                     if "problemInfo" not in response_dict or "language" not in response_dict:
-                        print("Missing required keys in response")
+                        print(f"Request ID: {request_id} - Missing required keys in response")
                         # Try to extract problem info from the raw content if JSON is malformed
                         if "problemInfo" not in response_dict and len(response_content) > 20:
+                            print(f"Request ID: {request_id} - Using raw content as problemInfo")
                             return {
                                 "problemInfo": response_content,  # Use the raw content as problemInfo
                                 "language": language
                             }
                         else:
+                            print(f"Request ID: {request_id} - Falling back to combined OCR text")
                             return {
                                 "problemInfo": f"Error: Response missing required keys. Using combined OCR text: {combined_ocr_text[:1000]}...",
                                 "language": language
                             }
 
+                    # Enhanced validation of extracted content
+                    problem_info = response_dict["problemInfo"]
+
                     # Check if problemInfo is too short (likely incomplete)
-                    if len(response_dict["problemInfo"]) < 100 and len(combined_ocr_text) > 200:
+                    if len(problem_info) < 100 and len(combined_ocr_text) > 200:
                         print("Problem info seems too short, using combined OCR text instead")
                         return {
                             "problemInfo": combined_ocr_text,
                             "language": response_dict.get("language", language)
                         }
+
+                    # Check if the content seems to be completely different from the OCR text
+                    # by comparing key phrases that should be present
+                    ocr_lines = combined_ocr_text.split('\n')
+                    potential_titles = [line.strip() for line in ocr_lines[:10] if line.strip() and len(line.strip()) < 50]
+
+                    # If we have potential titles from the OCR text, check if any appear in the processed text
+                    if potential_titles:
+                        title_found = False
+                        for title in potential_titles:
+                            if len(title) > 5 and title in problem_info:  # Only check substantial titles
+                                title_found = True
+                                break
+
+                        if not title_found:
+                            print(f"Warning: Extracted content doesn't contain expected title: {potential_titles[0]}")
+                            print("Using original OCR text instead")
+                            return {
+                                "problemInfo": combined_ocr_text,
+                                "language": response_dict.get("language", language)
+                            }
+
+                    # Add a unique request ID to help track issues
+                    request_id = str(uuid.uuid4())[:8]
+                    print(f"Request ID: {request_id} - Content validated successfully")
 
                     return response_dict
 
