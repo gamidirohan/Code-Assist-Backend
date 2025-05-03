@@ -29,10 +29,10 @@ myenv/
 **POST /api/debug**
 - Input: JSON with "imageDataList" (array of base64-encoded images), "problemInfo" (original problem text), and "language" (optional).
 - Processing: Analyzes code from screenshots, identifies bugs, and suggests improvements.
-- Response: JSON with "debug" containing:
+- Response: JSON object with the following fields:
   - "code": The original code that was analyzed
   - "debug_analysis": Detailed analysis of issues and how to fix them
-  - "thoughts": Step-by-step thought process during debugging
+  - "thoughts": Step-by-step thought process during debugging (array of strings)
   - "time_complexity": Big O notation for time complexity
   - "space_complexity": Big O notation for space complexity
   - "time_complexity_explanation": Detailed explanation of time complexity

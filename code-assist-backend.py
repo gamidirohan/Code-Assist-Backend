@@ -859,12 +859,12 @@ async def debug_route(request: Request):
                     )
                     print("Instructor debug analysis succeeded")
 
-                    # Convert to JSON string
-                    debug_content = json.dumps(result.model_dump(), indent=2)
+                    # Get the model data as a dictionary
+                    debug_content = result.model_dump()
 
                     # If we get here, the chat completed successfully
                     chat_completed = True
-                    return {"debug": debug_content}
+                    return debug_content
 
                 except Exception as instructor_err:
                     print(f"Instructor debug analysis failed: {str(instructor_err)}")
@@ -928,7 +928,7 @@ async def debug_route(request: Request):
                             else:
                                 response_dict[key] = "Not available"
 
-                    return {"debug": json.dumps(response_dict, indent=2)}
+                    return response_dict
 
                 except json.JSONDecodeError as json_err:
                     print(f"JSON decode error in debug response: {json_err}")
@@ -945,7 +945,7 @@ async def debug_route(request: Request):
                         "space_complexity_explanation": "Could not analyze space complexity"
                     }
 
-                    return {"debug": json.dumps(fallback_response, indent=2)}
+                    return fallback_response
 
             except Exception as e:
                 print(f"Unexpected error processing debug response: {str(e)}")
@@ -959,7 +959,7 @@ async def debug_route(request: Request):
                     "space_complexity_explanation": "Could not analyze space complexity"
                 }
 
-                return {"debug": json.dumps(fallback_response, indent=2)}
+                return fallback_response
 
         except SDKError as chat_err:
             if "Requests rate limit exceeded" in str(chat_err):
@@ -980,7 +980,7 @@ async def debug_route(request: Request):
                         "space_complexity_explanation": "Could not analyze space complexity due to rate limiting"
                     }
 
-                    return {"debug": json.dumps(fallback_response, indent=2)}
+                    return fallback_response
 
                 # Wait and retry
                 time.sleep(wait_time)
@@ -1005,7 +1005,7 @@ async def debug_route(request: Request):
                     "space_complexity_explanation": "Could not analyze space complexity due to an error"
                 }
 
-                return {"debug": json.dumps(fallback_response, indent=2)}
+                return fallback_response
 
             # Wait and retry for general errors
             wait_time = backoff_time * (2 ** (chat_attempt - 1))
