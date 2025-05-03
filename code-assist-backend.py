@@ -133,7 +133,7 @@ async def extract_route(request: Request):
                                             },
                                             {
                                                 "type": "text",
-                                                "text": "This is a screenshot of a coding problem. Please extract all the text from this image, preserving the exact formatting, including the problem title, description, examples, constraints, and any other relevant information. Format your response as plain text without any additional commentary."
+                                                "text": "This is a screenshot of a coding problem. Extract ALL text from this image with perfect accuracy, preserving the exact formatting. Pay special attention to:\n\n1. Problem title and difficulty level\n2. Complete problem description with ALL details\n3. ALL examples with their inputs, outputs, and explanations\n4. ALL constraints and edge cases (e.g., array size limits, value ranges)\n5. Time and space complexity requirements\n6. Any code templates or function signatures\n\nFormat your response as plain text without any additional commentary. Include EVERY number, symbol, and special character exactly as shown. Do not summarize or paraphrase anything - extract the EXACT text as it appears."
                                             }
                                         ]
                                     }
@@ -237,12 +237,17 @@ async def extract_route(request: Request):
         "These screenshots are multiple captures of a long problem and likely contain overlapping content. "
         "Your task is to create a COMPLETE and EXACT reproduction of the problem statement by carefully analyzing all the text.\n\n"
         "IMPORTANT INSTRUCTIONS:\n"
-        "1. Extract EVERY detail from the screenshots, including, title, full description, ALL examples, ALL constraints, and ANY follow-up questions\n"
+        "1. Extract EVERY detail from the screenshots, including title, difficulty level, full description, ALL examples, ALL constraints, and ANY follow-up questions\n"
         "2. Preserve the EXACT formatting, including newlines, indentation, and code blocks\n"
         "3. Include ALL code snippets exactly as shown, including comments and class definitions\n"
         "4. Pay special attention to numerical details like constraints (e.g., array size limits, value ranges)\n"
-        "5. Merge overlapping content carefully to avoid duplication\n\n"
-        "CRITICAL: Do not miss ANY information from the original problem. Include the description, all constraints including value ranges, and any follow-up questions about space/time complexity.\n\n"
+        "5. Merge overlapping content carefully to avoid duplication\n"
+        "6. Ensure ALL examples are included with their exact inputs, outputs, and explanations\n"
+        "7. Include ALL constraints, even if they seem redundant or obvious\n"
+        "8. Preserve ALL time and space complexity requirements exactly as stated\n"
+        "9. If there are multiple approaches mentioned or hinted at, include ALL of them\n"
+        "10. If edge cases are mentioned, make sure they are ALL included\n\n"
+        "CRITICAL: Do not miss ANY information from the original problem. The extracted problem statement must be COMPLETE and EXACT, with no information lost or altered. This is extremely important for the user to solve the problem correctly.\n\n"
         "Return a valid, properly formatted JSON object with exactly two root keys: 'problemInfo' and 'language'. "
         "The 'problemInfo' key should contain a detailed string with the COMPLETE problem information EXACTLY as given in the images. "
         "The 'language' key should contain a string with the programming language. "
@@ -408,6 +413,13 @@ async def generate_route(request: Request):
         f"1. Analyze the problem and explain different approaches (brute force, better, and optimal)\n"
         f"2. Implement the optimal solution with clean, well-commented code\n"
         f"3. Analyze the time and space complexity\n\n"
+        f"IMPORTANT GUIDELINES:\n"
+        f"- Pay careful attention to ALL constraints mentioned in the problem\n"
+        f"- Ensure your solution handles ALL edge cases\n"
+        f"- If the problem specifies time or space complexity requirements, your solution MUST meet these requirements\n"
+        f"- The OPTIMAL solution should be the most efficient possible given the constraints\n"
+        f"- If multiple optimal approaches exist, choose the one that is most readable and maintainable\n"
+        f"- Ensure your code is correct and would pass all test cases\n\n"
         f"Format your response as a valid JSON object with EXACTLY these keys (case-sensitive):\n"
         f"- 'Problem Information': A summary of the problem\n"
         f"- 'Explanation': A detailed explanation with three sections clearly labeled and separated by newlines:\n"
