@@ -42,10 +42,25 @@ try:
             "json_schema_extra": {"by_alias": True}
         }
 
+    class DebugSolution(BaseModel):
+        """Model for code debugging output"""
+        code: str = Field(description="The original or modified code that was analyzed")
+        debug_analysis: str = Field(description="A detailed analysis of the code issues, potential bugs, and suggested improvements")
+        thoughts: List[str] = Field(description="The thought process during debugging, displayed as bullet points")
+        time_complexity: str = Field(description="Big O notation for the time complexity of the code")
+        space_complexity: str = Field(description="Big O notation for the space complexity of the code")
+        time_complexity_explanation: str = Field(description="Detailed explanation of the time complexity")
+        space_complexity_explanation: str = Field(description="Detailed explanation of the space complexity")
+
+        model_config = {
+            "populate_by_name": True
+        }
+
     INSTRUCTOR_AVAILABLE = True
 except ImportError:
     INSTRUCTOR_AVAILABLE = False
     CodeSolution = None
+    DebugSolution = None
 
 dotenv.load_dotenv()
 
@@ -614,6 +629,388 @@ async def generate_route(request: Request):
 
     # This should never be reached due to the error handling above
     raise HTTPException(status_code=500, detail="Failed to generate code after maximum retries")
+
+
+@app.post("/api/debug")
+async def debug_route(request: Request):
+    """
+    Expects a JSON body with:
+      "imageDataList": Array of base64-encoded images (original + debugging screenshots)
+      "problemInfo": The original problem information
+      "language": The desired solution language (defaults to Python)
+    Returns a detailed debug analysis of the code.
+    """
+    print("Incoming debug request:", request)  # Print the request object for debugging
+
+    body = await request.json()
+    print("Full debug request body:", body)  # Print the parsed JSON body
+
+    # Extract request parameters
+    imageDataList = body.get("imageDataList", [])
+    problemInfo = body.get("problemInfo", "")
+    language = body.get("language", "python")
+
+    # Validate request parameters
+    if not imageDataList:
+        raise HTTPException(status_code=400, detail="imageDataList cannot be empty.")
+
+    if not problemInfo:
+        print("Warning: problemInfo is empty")
+
+    # Process parameters for OCR extraction
+    max_retries = 5
+    backoff_time = 2
+    all_ocr_results = []
+
+    # Process each image in the list to extract code and error messages
+    for i, base64_data in enumerate(imageDataList):
+        print(f"Processing debug image {i+1} of {len(imageDataList)}")
+
+        # For rate limit errors, we'll be more patient and retry with longer waits
+        max_rate_limit_retries = 10  # More retries for rate limits
+        initial_wait_time = 1  # Start with 1 second wait
+
+        # Process this image with persistent retries
+        image_processed = False
+        rate_limit_attempt = 0
+        general_attempt = 0
+
+        while not image_processed:
+            try:
+                # Run OCR on this image
+                try:
+                    # Step 1: Process the image with Mistral OCR
+                    image_response = client.ocr.process(
+                        document=ImageURLChunk(image_url=f"data:image/jpeg;base64,{base64_data}"),
+                        model="mistral-ocr-latest"
+                    )
+
+                    # Get the OCR markdown result
+                    image_ocr_md = image_response.pages[0].markdown
+                    print(f"OCR markdown for debug image {i+1}: {image_ocr_md[:100]}...")
+
+                    # Step 2: If the OCR result is just an image reference, use Mistral's vision model
+                    if image_ocr_md.startswith("![") and image_ocr_md.endswith(")") and len(image_ocr_md.split()) <= 2:
+                        print(f"Mistral OCR returned only an image reference for debug image {i+1}. Using Mistral vision model...")
+
+                        try:
+                            # Use Mistral's vision model to extract text from the image
+                            vision_response = client.chat.complete(
+                                model="pixtral-12b-latest",
+                                messages=[
+                                    {
+                                        "role": "user",
+                                        "content": [
+                                            {
+                                                "type": "image_url",
+                                                "image_url": {
+                                                    "url": f"data:image/jpeg;base64,{base64_data}"
+                                                }
+                                            },
+                                            {
+                                                "type": "text",
+                                                "text": "This is a screenshot of code with possible error messages or test cases. Extract ALL text from this image with perfect accuracy, preserving the exact formatting. Pay special attention to:\n\n1. The code implementation\n2. Any error messages or stack traces\n3. Test cases and their inputs/outputs\n4. Any failure messages or debugging information\n5. Any comments or annotations\n\nFormat your response as plain text without any additional commentary. Include EVERY number, symbol, and special character exactly as shown. Do not summarize or paraphrase anything - extract the EXACT text as it appears."
+                                            }
+                                        ]
+                                    }
+                                ],
+                                temperature=0
+                            )
+
+                            # Extract the text from the vision model response
+                            extracted_text = vision_response.choices[0].message.content
+
+                            if extracted_text and len(extracted_text) > 20:
+                                print(f"Successfully extracted text using vision model for debug image {i+1}")
+                                image_ocr_md = extracted_text
+                            else:
+                                print(f"Vision model returned insufficient text for debug image {i+1}")
+                        except Exception as vision_err:
+                            print(f"Error using vision model for debug image {i+1}: {str(vision_err)}")
+
+                    print(f"Successfully processed debug image {i+1}")
+                    all_ocr_results.append({
+                        "index": i,
+                        "text": image_ocr_md
+                    })
+                    # Successfully processed this image
+                    image_processed = True
+
+                except SDKError as ocr_err:
+                    if "Requests rate limit exceeded" in str(ocr_err):
+                        rate_limit_attempt += 1
+                        wait_time = initial_wait_time * (2 ** (rate_limit_attempt - 1))  # Exponential backoff
+                        print(f"OCR rate limit exceeded for debug image {i+1}, attempt {rate_limit_attempt}/{max_rate_limit_retries}. Waiting {wait_time} seconds...")
+
+                        if rate_limit_attempt >= max_rate_limit_retries:
+                            print(f"Failed to process debug image {i+1} after {max_rate_limit_retries} rate limit retries.")
+                            # Even after many retries, we'll still try to continue with what we have
+                            if i > 0 and all_ocr_results:
+                                print(f"Moving on with {len(all_ocr_results)} successfully processed debug images")
+                                image_processed = True  # Mark as processed to exit the loop
+                            else:
+                                # If this is the first image, we need to succeed
+                                raise HTTPException(
+                                    status_code=429,
+                                    detail=f"Rate limit exceeded after {max_rate_limit_retries} retries. Please try again later."
+                                )
+
+                        # Wait and retry
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        raise ocr_err
+
+            except HTTPException:
+                # Re-raise HTTP exceptions
+                raise
+
+            except Exception as e:
+                general_attempt += 1
+                print(f"Error processing debug image {i+1}: {str(e)}")
+
+                if general_attempt >= max_retries:
+                    print(f"Failed to process debug image {i+1} after {max_retries} retries due to error: {str(e)}")
+                    # After max general retries, continue with what we have if possible
+                    if i > 0 and all_ocr_results:
+                        print(f"Moving on with {len(all_ocr_results)} successfully processed debug images")
+                        image_processed = True  # Mark as processed to exit the loop
+                    else:
+                        # If this is the first image, we need to succeed
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Failed to process the first debug image after {max_retries} retries: {str(e)}"
+                        )
+
+                # Wait and retry for general errors
+                wait_time = backoff_time * (2 ** (general_attempt - 1))
+                time.sleep(wait_time)
+                continue
+
+    # If we couldn't process any images, return an error
+    if not all_ocr_results:
+        raise HTTPException(status_code=500, detail="Failed to process any debug images after maximum retries.")
+
+    # Combine all OCR results, preserving order
+    all_ocr_results.sort(key=lambda x: x["index"])
+    combined_ocr_text = "\n\n---IMAGE BOUNDARY---\n\n".join([result["text"] for result in all_ocr_results])
+
+    # Now process the combined OCR text for debugging
+    print(f"Processing combined OCR text from {len(all_ocr_results)} debug images")
+
+    # For chat completion, we'll also use a more patient retry approach
+    max_chat_rate_limit_retries = 10
+    initial_chat_wait_time = 1
+
+    chat_attempt = 0
+    chat_rate_limit_attempt = 0
+    chat_completed = False
+
+    # Prepare the prompt for debug analysis
+    debug_prompt = (
+        f"I need you to debug code from a coding problem. Here's the context:\n\n"
+        f"ORIGINAL PROBLEM:\n{problemInfo}\n\n"
+        f"CODE AND DEBUG INFORMATION:\n{combined_ocr_text}\n\n"
+        f"Language: {language}\n\n"
+        f"Your task is to analyze the code, identify issues, and provide a comprehensive debug analysis. "
+        f"The code might have syntax errors, logical bugs, edge case failures, or performance issues. "
+        f"There might be test cases showing expected vs. actual outputs, or error messages from failed executions.\n\n"
+        f"IMPORTANT INSTRUCTIONS:\n"
+        f"1. Carefully analyze the code and any error messages or test failures\n"
+        f"2. Identify ALL bugs, issues, or inefficiencies in the code\n"
+        f"3. Explain WHY each issue occurs and HOW to fix it\n"
+        f"4. Consider edge cases that might not be handled correctly\n"
+        f"5. Analyze time and space complexity of the current implementation\n"
+        f"6. Suggest optimizations if the current solution doesn't meet the required complexity\n"
+        f"7. If test cases are provided, explain why the code fails on specific inputs\n"
+        f"8. Provide a step-by-step thought process for your debugging approach\n\n"
+        f"Format your response as a valid JSON object with the following keys:\n"
+        f"- 'code': The original code that was analyzed (extract it from the debug information)\n"
+        f"- 'debug_analysis': A detailed analysis of the issues found and how to fix them\n"
+        f"- 'thoughts': An array of strings representing your step-by-step thought process during debugging\n"
+        f"- 'time_complexity': The Big O notation for the time complexity of the original code\n"
+        f"- 'space_complexity': The Big O notation for the space complexity of the original code\n"
+        f"- 'time_complexity_explanation': Detailed explanation of the time complexity analysis\n"
+        f"- 'space_complexity_explanation': Detailed explanation of the space complexity analysis\n\n"
+        f"Ensure your response is a valid JSON object with EXACTLY these keys. The frontend expects this specific format."
+    )
+
+    # Keep trying until we succeed or exhaust all retries
+    while not chat_completed:
+        try:
+            # Try to use Instructor for structured generation if available
+            if INSTRUCTOR_AVAILABLE and DebugSolution is not None:
+                try:
+                    print("Using Instructor for structured debug analysis")
+                    # Create a patched client using Instructor with Groq
+                    from groq import Groq
+                    groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+                    patched_client = instructor.patch(groq_client)
+
+                    # Generate structured output directly
+                    result = patched_client.chat.completions.create(
+                        model="deepseek-r1-distill-llama-70b",  # Using a more capable model for debugging
+                        response_model=DebugSolution,
+                        messages=[
+                            {"role": "user", "content": debug_prompt}
+                        ],
+                        temperature=0.1,
+                        max_tokens=4096
+                    )
+                    print("Instructor debug analysis succeeded")
+
+                    # Convert to JSON string
+                    debug_content = json.dumps(result.model_dump(), indent=2)
+
+                    # If we get here, the chat completed successfully
+                    chat_completed = True
+                    return {"debug": debug_content}
+
+                except Exception as instructor_err:
+                    print(f"Instructor debug analysis failed: {str(instructor_err)}")
+                    print("Falling back to standard generation")
+                    # Fall back to standard generation
+
+            # Standard approach using Mistral
+            chat_response = client.chat.complete(
+                model="pixtral-12b-latest",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": debug_prompt
+                    },
+                ],
+                response_format={"type": "json_object"},
+                temperature=0
+            )
+
+            # If we get here, the chat completed successfully
+            chat_completed = True
+
+            # Process the response
+            try:
+                response_content = chat_response.choices[0].message.content
+                print(f"Raw debug response content: {response_content[:200]}...")
+
+                # Try to parse the JSON response
+                try:
+                    response_dict = json.loads(response_content)
+
+                    # Validate that the response has the required keys
+                    required_keys = ["code", "debug_analysis", "thoughts", "time_complexity",
+                                    "space_complexity", "time_complexity_explanation",
+                                    "space_complexity_explanation"]
+
+                    missing_keys = [key for key in required_keys if key not in response_dict]
+
+                    if missing_keys:
+                        print(f"Missing required keys in debug response: {missing_keys}")
+                        # Try to create a valid response with default values for missing keys
+                        for key in missing_keys:
+                            if key == "thoughts":
+                                response_dict[key] = ["Could not generate detailed thoughts"]
+                            elif key == "code":
+                                # Try to extract code from the OCR text
+                                code_blocks = []
+                                for result in all_ocr_results:
+                                    text = result["text"]
+                                    if "```" in text:
+                                        # Extract code blocks
+                                        code_start = text.find("```")
+                                        code_end = text.rfind("```")
+                                        if code_start != -1 and code_end != -1 and code_end > code_start + 3:
+                                            code_blocks.append(text[code_start:code_end+3])
+
+                                if code_blocks:
+                                    response_dict[key] = "\n".join(code_blocks)
+                                else:
+                                    response_dict[key] = "Could not extract code from the debug information"
+                            else:
+                                response_dict[key] = "Not available"
+
+                    return {"debug": json.dumps(response_dict, indent=2)}
+
+                except json.JSONDecodeError as json_err:
+                    print(f"JSON decode error in debug response: {json_err}")
+                    print(f"Raw debug content: {response_content[:200]}...")
+
+                    # If JSON parsing fails but we have content, try to create a structured response
+                    fallback_response = {
+                        "code": "Could not extract code from the debug information",
+                        "debug_analysis": response_content,
+                        "thoughts": ["Could not generate structured thoughts due to JSON parsing error"],
+                        "time_complexity": "Unknown",
+                        "space_complexity": "Unknown",
+                        "time_complexity_explanation": "Could not analyze time complexity",
+                        "space_complexity_explanation": "Could not analyze space complexity"
+                    }
+
+                    return {"debug": json.dumps(fallback_response, indent=2)}
+
+            except Exception as e:
+                print(f"Unexpected error processing debug response: {str(e)}")
+                fallback_response = {
+                    "code": "Could not extract code from the debug information",
+                    "debug_analysis": f"Error processing debug response: {str(e)}",
+                    "thoughts": ["An error occurred during debug analysis"],
+                    "time_complexity": "Unknown",
+                    "space_complexity": "Unknown",
+                    "time_complexity_explanation": "Could not analyze time complexity",
+                    "space_complexity_explanation": "Could not analyze space complexity"
+                }
+
+                return {"debug": json.dumps(fallback_response, indent=2)}
+
+        except SDKError as chat_err:
+            if "Requests rate limit exceeded" in str(chat_err):
+                chat_rate_limit_attempt += 1
+                wait_time = initial_chat_wait_time * (2 ** (chat_rate_limit_attempt - 1))  # Exponential backoff
+                print(f"Chat rate limit exceeded during debug, attempt {chat_rate_limit_attempt}/{max_chat_rate_limit_retries}. Waiting {wait_time} seconds...")
+
+                if chat_rate_limit_attempt >= max_chat_rate_limit_retries:
+                    print(f"Failed to complete debug chat after {max_chat_rate_limit_retries} rate limit retries.")
+                    # After exhausting all retries, return a fallback response
+                    fallback_response = {
+                        "code": "Could not extract code from the debug information",
+                        "debug_analysis": f"API rate limited after {max_chat_rate_limit_retries} retries. Here's the raw OCR text:\n\n{combined_ocr_text[:1000]}...",
+                        "thoughts": ["Rate limit exceeded during debug analysis"],
+                        "time_complexity": "Unknown",
+                        "space_complexity": "Unknown",
+                        "time_complexity_explanation": "Could not analyze time complexity due to rate limiting",
+                        "space_complexity_explanation": "Could not analyze space complexity due to rate limiting"
+                    }
+
+                    return {"debug": json.dumps(fallback_response, indent=2)}
+
+                # Wait and retry
+                time.sleep(wait_time)
+                continue
+            else:
+                raise chat_err
+
+        except Exception as e:
+            chat_attempt += 1
+            print(f"Error in debug chat completion: {str(e)}")
+
+            if chat_attempt >= max_retries:
+                print(f"Failed to complete debug chat after {max_retries} retries due to error: {str(e)}")
+                # After exhausting all retries, return a fallback response
+                fallback_response = {
+                    "code": "Could not extract code from the debug information",
+                    "debug_analysis": f"Error during debug analysis: {str(e)}. Here's the raw OCR text:\n\n{combined_ocr_text[:1000]}...",
+                    "thoughts": ["An error occurred during debug analysis"],
+                    "time_complexity": "Unknown",
+                    "space_complexity": "Unknown",
+                    "time_complexity_explanation": "Could not analyze time complexity due to an error",
+                    "space_complexity_explanation": "Could not analyze space complexity due to an error"
+                }
+
+                return {"debug": json.dumps(fallback_response, indent=2)}
+
+            # Wait and retry for general errors
+            wait_time = backoff_time * (2 ** (chat_attempt - 1))
+            time.sleep(wait_time)
+            continue
 
 
 import socket

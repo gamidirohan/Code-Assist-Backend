@@ -16,18 +16,30 @@ myenv/
 
 ## Endpoints
 
-**POST /api/extract**  
-- Input: JSON with "imageDataList" (array of base64-encoded images) and "language" (optional).  
-- Processing: Performs OCR on the first base64 image and returns extracted text.  
+**POST /api/extract**
+- Input: JSON with "imageDataList" (array of base64-encoded images) and "language" (optional).
+- Processing: Performs OCR on the first base64 image and returns extracted text.
 - Response: JSON with the recognized text.
 
-**POST /api/generate**  
-- Input: JSON with "problemInfo" (text of the coding problem) and "language" (optional).  
-- Processing: Generates a code solution, explanation, and complexity details.  
+**POST /api/generate**
+- Input: JSON with "problemInfo" (text of the coding problem) and "language" (optional).
+- Processing: Generates a code solution, explanation, and complexity details.
 - Response: JSON with "code" as the generated solution.
 
+**POST /api/debug**
+- Input: JSON with "imageDataList" (array of base64-encoded images), "problemInfo" (original problem text), and "language" (optional).
+- Processing: Analyzes code from screenshots, identifies bugs, and suggests improvements.
+- Response: JSON with "debug" containing:
+  - "code": The original code that was analyzed
+  - "debug_analysis": Detailed analysis of issues and how to fix them
+  - "thoughts": Step-by-step thought process during debugging
+  - "time_complexity": Big O notation for time complexity
+  - "space_complexity": Big O notation for space complexity
+  - "time_complexity_explanation": Detailed explanation of time complexity
+  - "space_complexity_explanation": Detailed explanation of space complexity
+
 ## .env File
-MISTRAL_API_KEY=<YOUR_MISTRAL_API_KEY>  
+MISTRAL_API_KEY=<YOUR_MISTRAL_API_KEY>
 GROQ_API_KEY=<YOUR_GROQ_API_KEY>
 
 ## Setup & Usage
