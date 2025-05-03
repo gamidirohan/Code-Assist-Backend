@@ -4,8 +4,10 @@ import dotenv
 import json
 import uvicorn
 import httpx
+import base64
+from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException
-from mistralai import Mistral, ImageURLChunk
+from mistralai import Mistral, ImageURLChunk, TextChunk
 from mistralai.models.sdkerror import SDKError
 from langchain_groq import ChatGroq
 
@@ -101,11 +103,55 @@ async def extract_route(request: Request):
             try:
                 # Run OCR on this image
                 try:
+                    # Step 1: Process the image with Mistral OCR
                     image_response = client.ocr.process(
                         document=ImageURLChunk(image_url=f"data:image/jpeg;base64,{base64_data}"),
                         model="mistral-ocr-latest"
                     )
+
+                    # Get the OCR markdown result
                     image_ocr_md = image_response.pages[0].markdown
+                    print(f"OCR markdown for image {i+1}: {image_ocr_md[:100]}...")
+
+                    # Step 2: If the OCR result is just an image reference, use Mistral's vision model
+                    if image_ocr_md.startswith("![") and image_ocr_md.endswith(")") and len(image_ocr_md.split()) <= 2:
+                        print(f"Mistral OCR returned only an image reference for image {i+1}. Using Mistral vision model...")
+
+                        try:
+                            # Use Mistral's vision model to extract text from the image
+                            vision_response = client.chat.complete(
+                                model="pixtral-12b-latest",
+                                messages=[
+                                    {
+                                        "role": "user",
+                                        "content": [
+                                            {
+                                                "type": "image_url",
+                                                "image_url": {
+                                                    "url": f"data:image/jpeg;base64,{base64_data}"
+                                                }
+                                            },
+                                            {
+                                                "type": "text",
+                                                "text": "This is a screenshot of a coding problem. Please extract all the text from this image, preserving the exact formatting, including the problem title, description, examples, constraints, and any other relevant information. Format your response as plain text without any additional commentary."
+                                            }
+                                        ]
+                                    }
+                                ],
+                                temperature=0
+                            )
+
+                            # Extract the text from the vision model response
+                            extracted_text = vision_response.choices[0].message.content
+
+                            if extracted_text and len(extracted_text) > 20:
+                                print(f"Successfully extracted text using vision model for image {i+1}")
+                                image_ocr_md = extracted_text
+                            else:
+                                print(f"Vision model returned insufficient text for image {i+1}")
+                        except Exception as vision_err:
+                            print(f"Error using vision model for image {i+1}: {str(vision_err)}")
+
                     print(f"Successfully processed image {i+1}")
                     all_ocr_results.append({
                         "index": i,
