@@ -9,75 +9,85 @@ from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException
 from mistralai import Mistral, TextChunk
 from mistralai.models.sdkerror import SDKError
-from langchain_groq import ChatGroq
+# Import DeepSeek AI client
+import requests
 
-# Import Instructor (successor to Outlines) for structured generation
-# Note: If instructor is not installed, we'll handle it gracefully
-try:
-    import instructor
-    from pydantic import BaseModel, Field
-    from typing import Dict, List, Optional
+# Define the expected response structure for code generation
+"""
+Expected JSON structure for code generation:
+{
+    "Problem Information": "A summary of the problem",
+    "Explanation": "BRUTE FORCE APPROACH:\n[explanation]\n\nBETTER APPROACH:\n[explanation]\n\nOPTIMAL APPROACH:\n[explanation]",
+    "Code": "```[language]\n[code implementation]\n```",
+    "Time Complexity": "Big O notation",
+    "Space Complexity": "Big O notation",
+    "complexity_explanation": "Detailed explanation of both time and space complexity"
+}
+"""
 
-    # Define the Pydantic model for structured output
-    class CodeSolution(BaseModel):
-        """Model for code generation output"""
-        # Using valid Python identifiers with aliases for the frontend
-        problem_information: str = Field(alias="Problem Information", description="A summary of the problem")
-        Explanation: str = Field(
-            description="Detailed explanation with three sections clearly labeled and separated by newlines",
-            json_schema_extra={
-                "format": "BRUTE FORCE APPROACH:\n[detailed explanation]\n\nBETTER APPROACH:\n[detailed explanation]\n\nOPTIMAL APPROACH:\n[detailed explanation]"
-            },
-            examples=["BRUTE FORCE APPROACH:\nThis is the brute force approach.\n\nBETTER APPROACH:\nThis is a better approach.\n\nOPTIMAL APPROACH:\nThis is the optimal approach."]
-        )
-        Code: str = Field(description="Implementation in the specified language wrapped in triple backticks")
-        time_complexity: str = Field(alias="Time Complexity", description="Big O analysis of the solution")
-        space_complexity: str = Field(alias="Space Complexity", description="Big O analysis of the solution")
-        complexity_explanation: str = Field(description="Detailed explanation of both time and space complexity")
-
-        model_config = {
-            # This ensures the field names are exactly as specified
-            "populate_by_name": True,
-            # Use aliases in the output JSON
-            "json_schema_extra": {"by_alias": True}
-        }
-
-    class DebugSolution(BaseModel):
-        """Model for code debugging output"""
-        code: str = Field(description="The original or modified code that was analyzed")
-        debug_analysis: str = Field(description="A detailed analysis of the code issues, potential bugs, and suggested improvements")
-        thoughts: List[str] = Field(description="The thought process during debugging, displayed as bullet points")
-        time_complexity: str = Field(description="Big O notation for the time complexity of the code")
-        space_complexity: str = Field(description="Big O notation for the space complexity of the code")
-        time_complexity_explanation: str = Field(description="Detailed explanation of the time complexity")
-        space_complexity_explanation: str = Field(description="Detailed explanation of the space complexity")
-
-        model_config = {
-            "populate_by_name": True
-        }
-
-    INSTRUCTOR_AVAILABLE = True
-except ImportError:
-    INSTRUCTOR_AVAILABLE = False
-    CodeSolution = None
-    DebugSolution = None
+# Define the expected response structure for debug analysis
+"""
+Expected JSON structure for debug analysis:
+{
+    "code": "The original code that was analyzed",
+    "debug_analysis": "A detailed analysis of the issues found and how to fix them",
+    "thoughts": ["Step 1", "Step 2", "Step 3"],
+    "time_complexity": "Big O notation",
+    "space_complexity": "Big O notation",
+    "time_complexity_explanation": "Explanation of time complexity",
+    "space_complexity_explanation": "Explanation of space complexity"
+}
+"""
 
 dotenv.load_dotenv()
 
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 client = Mistral(api_key=MISTRAL_API_KEY)
 
-# Configure the LLM for code generation
-groq_llm = ChatGroq(
-    model_name="deepseek-r1-distill-llama-70b",  # Using DeepSeek model as primary for better code generation
-    temperature=0.1,  # Slight temperature for creativity while maintaining reliability
-    max_tokens=4096,  # Ensure we have enough tokens for comprehensive solutions
-    model_kwargs={
-        "response_format": {"type": "json_object"},
-        "top_p": 0.95  # High-quality sampling
-    },
-    groq_api_key=os.getenv("GROQ_API_KEY")
-)
+# Configure DeepSeek API
+DEEPSEEK_API_KEY = "sk-f4c9e265c5054bc2b382f9141710583e"
+DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+
+# DeepSeek API headers
+DEEPSEEK_HEADERS = {
+    "Content-Type": "application/json",
+    "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
+}
+
+# Function to call DeepSeek API directly
+def call_deepseek_api(prompt, model="deepseek-coder", temperature=0.1, max_tokens=4096, response_format=None):
+    """
+    Call the DeepSeek API directly with the given parameters.
+
+    Args:
+        prompt (str): The prompt to send to the model
+        model (str): The model to use (default: "deepseek-coder")
+        temperature (float): The temperature for generation (default: 0.1)
+        max_tokens (int): The maximum number of tokens to generate (default: 4096)
+        response_format (dict): The response format (default: None)
+
+    Returns:
+        dict: The response from the DeepSeek API
+    """
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+
+    if response_format:
+        payload["response_format"] = response_format
+
+    try:
+        response = requests.post(DEEPSEEK_API_URL, headers=DEEPSEEK_HEADERS, json=payload)
+        response.raise_for_status()  # Raise an exception for HTTP errors
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Error calling DeepSeek API: {str(e)}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"Response content: {e.response.text}")
+        raise
 
 app = FastAPI()
 
@@ -410,129 +420,168 @@ async def generate_route(request: Request):
     prompt_text = (
         f"You are an expert {language} developer tasked with solving a coding problem. \n\n"
         f"PROBLEM DESCRIPTION:\n{body['problemInfo']}\n\n"
-        f"Please provide a comprehensive solution in {language} with the following structure:\n"
-        f"1. Analyze the problem and explain different approaches (brute force, better, and optimal)\n"
-        f"2. Implement the optimal solution with clean, well-commented code\n"
-        f"3. Analyze the time and space complexity\n\n"
-        f"IMPORTANT GUIDELINES:\n"
-        f"- Pay careful attention to ALL constraints mentioned in the problem\n"
-        f"- Ensure your solution handles ALL edge cases\n"
-        f"- If the problem specifies time or space complexity requirements, your solution MUST meet these requirements\n"
-        f"- The OPTIMAL solution should be the most efficient possible given the constraints\n"
-        f"- If multiple optimal approaches exist, choose the one that is most readable and maintainable\n"
-        f"- Ensure your code is correct and would pass all test cases\n\n"
-        f"Format your response as a valid JSON object with EXACTLY these keys (case-sensitive):\n"
-        f"- 'Problem Information': A summary of the problem\n"
-        f"- 'Explanation': A detailed explanation with three sections clearly labeled and separated by newlines:\n"
-        f"  BRUTE FORCE APPROACH:\n[detailed explanation]\n\nBETTER APPROACH:\n[detailed explanation]\n\nOPTIMAL APPROACH:\n[detailed explanation]\n"
+        f"Provide a solution in {language} with the following structure:\n"
+        f"1. Brief analysis of approaches (brute force, better, optimal)\n"
+        f"2. Implement the optimal solution with clean code\n"
+        f"3. Analyze time and space complexity\n\n"
+        f"IMPORTANT: Be concise to avoid hitting token limits. Format your response as a valid JSON object with EXACTLY these keys (case-sensitive):\n"
+        f"- 'Problem Information': Brief summary of the problem (1-2 sentences)\n"
+        f"- 'Explanation': Three sections labeled and separated by newlines:\n"
+        f"  BRUTE FORCE APPROACH:\n[brief explanation]\n\nBETTER APPROACH:\n[brief explanation]\n\nOPTIMAL APPROACH:\n[brief explanation]\n"
         f"- 'Code': Your implementation in {language} wrapped in triple backticks\n"
-        f"- 'Time Complexity': Big O analysis of your solution\n"
-        f"- 'Space Complexity': Big O analysis of your solution\n"
-        f"- 'complexity_explanation': Detailed explanation of both time and space complexity\n\n"
-        f"IMPORTANT: Ensure your response is a valid JSON object with EXACTLY these keys. The frontend expects this specific format."
+        f"- 'Time Complexity': Big O notation only (e.g., 'O(n log n)')\n"
+        f"- 'Space Complexity': Big O notation only (e.g., 'O(n)')\n"
+        f"- 'complexity_explanation': Brief explanation of complexity\n\n"
+        f"Keep all explanations concise to ensure the response fits within token limits. The frontend expects this specific JSON format."
     )
 
     # Maximum retries for code generation
     max_gen_retries = 3
     gen_attempt = 0
 
-    # Try to use Instructor for structured generation if available
-    if INSTRUCTOR_AVAILABLE:
+    # Check if the input is a nested JSON string that needs to be parsed
+    problem_info = body.get("problemInfo", "")
+    if isinstance(problem_info, str) and problem_info.startswith("{") and problem_info.endswith("}"):
         try:
-            print("Using Instructor for structured generation")
-            # Create a patched client using Instructor with Groq
-            from groq import Groq
-            groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-            patched_client = instructor.patch(groq_client)
+            # Try to parse the nested JSON
+            parsed_problem = json.loads(problem_info)
+            if isinstance(parsed_problem, dict) and "problemInfo" in parsed_problem:
+                # Extract the actual problem info from the nested JSON
+                problem_info = parsed_problem.get("problemInfo", "")
+                print(f"Extracted nested problemInfo: {problem_info[:100]}...")
+                # Update the body with the extracted problem info
+                body["problemInfo"] = problem_info
+                # Update the prompt with the extracted problem info
+                prompt_text = (
+                    f"You are an expert {language} developer tasked with solving a coding problem. \n\n"
+                    f"PROBLEM DESCRIPTION:\n{problem_info}\n\n"
+                    f"Please provide a comprehensive solution in {language} with the following structure:\n"
+                    f"1. Analyze the problem and explain different approaches (brute force, better, and optimal)\n"
+                    f"2. Implement the optimal solution with clean, well-commented code\n"
+                    f"3. Analyze the time and space complexity\n\n"
+                    f"IMPORTANT GUIDELINES:\n"
+                    f"- Pay careful attention to ALL constraints mentioned in the problem\n"
+                    f"- Ensure your solution handles ALL edge cases\n"
+                    f"- If the problem specifies time or space complexity requirements, your solution MUST meet these requirements\n"
+                    f"- The OPTIMAL solution should be the most efficient possible given the constraints\n"
+                    f"- If multiple optimal approaches exist, choose the one that is most readable and maintainable\n"
+                    f"- Ensure your code is correct and would pass all test cases\n\n"
+                    f"Format your response as a valid JSON object with EXACTLY these keys (case-sensitive):\n"
+                    f"- 'Problem Information': A summary of the problem\n"
+                    f"- 'Explanation': A detailed explanation with three sections clearly labeled and separated by newlines:\n"
+                    f"  BRUTE FORCE APPROACH:\n[detailed explanation]\n\nBETTER APPROACH:\n[detailed explanation]\n\nOPTIMAL APPROACH:\n[detailed explanation]\n"
+                    f"- 'Code': Your implementation in {language} wrapped in triple backticks\n"
+                    f"- 'Time Complexity': Big O analysis of your solution\n"
+                    f"- 'Space Complexity': Big O analysis of your solution\n"
+                    f"- 'complexity_explanation': Detailed explanation of both time and space complexity\n\n"
+                    f"IMPORTANT: Ensure your response is a valid JSON object with EXACTLY these keys. The frontend expects this specific format."
+                )
+        except json.JSONDecodeError:
+            # If parsing fails, use the original problem_info
+            pass
 
-            # Check if the input is a nested JSON string that needs to be parsed
-            problem_info = body.get("problemInfo", "")
-            if isinstance(problem_info, str) and problem_info.startswith("{") and problem_info.endswith("}"):
-                try:
-                    # Try to parse the nested JSON
-                    parsed_problem = json.loads(problem_info)
-                    if isinstance(parsed_problem, dict) and "problemInfo" in parsed_problem:
-                        # Extract the actual problem info from the nested JSON
-                        problem_info = parsed_problem.get("problemInfo", "")
-                        print(f"Extracted nested problemInfo: {problem_info[:100]}...")
-                        # Update the body with the extracted problem info
-                        body["problemInfo"] = problem_info
-                except json.JSONDecodeError:
-                    # If parsing fails, use the original problem_info
-                    pass
+    # Try to use DeepSeek API directly first
+    try:
+        print("Using DeepSeek API directly for code generation")
 
-            # Generate structured output directly
-            result = patched_client.chat.completions.create(
-                model="llama-3.1-8b-instant",
-                response_model=CodeSolution,
-                messages=[
-                    {"role": "user", "content": prompt_text}
-                ],
-                temperature=0.1,
-                max_tokens=4096
-            )
-            print("Instructor generation succeeded")
+        # Call DeepSeek API
+        response = call_deepseek_api(
+            prompt=prompt_text,
+            model="deepseek-coder",
+            temperature=0.1,
+            max_tokens=4096,
+            response_format={"type": "json_object"}
+        )
 
-            # Convert to JSON string with aliases
-            generated_content = json.dumps(result.model_dump(by_alias=True), indent=2)
-
-            # Print the full generated content for debugging
-            print("\n\nFULL GENERATED JSON OUTPUT:")
-            print(generated_content)
-            print("\n\n")
-
-            # Also print the Explanation field specifically
-            parsed = json.loads(generated_content)
-            print("EXPLANATION FIELD:")
-            print(repr(parsed.get("Explanation", "")))  # Use repr to show escape sequences
-            print("\n\n")
-
-            return {"code": generated_content}
-        except Exception as instructor_err:
-            print(f"Instructor generation failed: {str(instructor_err)}")
-            print("Falling back to standard generation")
-            # Fall back to standard generation
-
-    # Standard generation approach
-    while gen_attempt < max_gen_retries:
-        try:
-            # Call the ChatGroq LLM
-            groq_response = groq_llm.invoke(prompt_text)
-            print(f"Generation attempt {gen_attempt+1} succeeded")
-
-            # Extract content
-            generated_content = groq_response.content
+        # Extract the content from the response
+        if "choices" in response and len(response["choices"]) > 0:
+            generated_content = response["choices"][0]["message"]["content"]
+            print("DeepSeek generation succeeded")
 
             # Try to parse as JSON to validate
             try:
-                # Just validate that it's valid JSON, we don't need to use the parsed content
-                json.loads(generated_content)
-                # If we get here, it's valid JSON
-                return {"code": generated_content}
+                # Validate that it's valid JSON
+                parsed = json.loads(generated_content)
 
+                # Print the full generated content for debugging
+                print("\n\nFULL GENERATED JSON OUTPUT:")
+                print(generated_content[:500] + "..." if len(generated_content) > 500 else generated_content)
+                print("\n\n")
+
+                # Also print the Explanation field specifically if it exists
+                if "Explanation" in parsed:
+                    print("EXPLANATION FIELD:")
+                    explanation = parsed.get("Explanation", "")
+                    print(repr(explanation[:500] + "..." if len(explanation) > 500 else explanation))  # Use repr to show escape sequences
+                    print("\n\n")
+
+                return {"code": generated_content}
             except json.JSONDecodeError as json_err:
                 print(f"JSON validation failed: {str(json_err)}")
+                print("Falling back to standard generation")
+                # Fall back to standard generation
+        else:
+            print("DeepSeek API returned an unexpected response format")
+            print("Falling back to standard generation")
+    except Exception as e:
+        print(f"DeepSeek direct generation failed: {str(e)}")
+        print("Falling back to standard generation")
+        # Fall back to standard generation
 
-                # If this is our last retry, try to fix the JSON or return what we have
-                if gen_attempt == max_gen_retries - 1:
-                    # Try to extract useful content even if JSON is invalid
-                    if "Problem Information" in generated_content and "Code" in generated_content:
-                        print("Returning non-JSON content as it contains useful information")
-                        return {"code": generated_content}
-                    else:
-                        # Create a simple JSON structure with the error and content
-                        fallback_json = {
-                            "Problem Information": {"title": "Error in JSON generation", "description": body['problemInfo']},
-                            "Explanation": "The model failed to generate valid JSON. Here is the raw output:",
-                            "Code": generated_content,
-                            "Time Complexity": "N/A",
-                            "Space Complexity": "N/A",
-                            "complexity_explanation": "N/A"
-                        }
-                        return {"code": json.dumps(fallback_json, indent=2)}
+    # Standard generation approach using DeepSeek API directly
+    while gen_attempt < max_gen_retries:
+        try:
+            print(f"Calling DeepSeek API directly (attempt {gen_attempt+1}/{max_gen_retries})")
 
-                # Try again with a more explicit prompt
-                prompt_text += "\n\nYour previous response was not valid JSON. Please ensure you return ONLY a valid JSON object with no additional text."
+            # Call DeepSeek API directly
+            response = call_deepseek_api(
+                prompt=prompt_text,
+                model="deepseek-coder",
+                temperature=0.1,
+                max_tokens=4096,
+                response_format={"type": "json_object"}
+            )
+
+            # Extract the content from the response
+            if "choices" in response and len(response["choices"]) > 0:
+                generated_content = response["choices"][0]["message"]["content"]
+                print(f"Generation attempt {gen_attempt+1} succeeded")
+                print(f"Raw response content: {generated_content[:200]}...")
+
+                # Try to parse as JSON to validate
+                try:
+                    # Just validate that it's valid JSON, we don't need to use the parsed content
+                    json.loads(generated_content)
+                    # If we get here, it's valid JSON
+                    return {"code": generated_content}
+
+                except json.JSONDecodeError as json_err:
+                    print(f"JSON validation failed: {str(json_err)}")
+
+                    # If this is our last retry, try to fix the JSON or return what we have
+                    if gen_attempt == max_gen_retries - 1:
+                        # Try to extract useful content even if JSON is invalid
+                        if "Problem Information" in generated_content and "Code" in generated_content:
+                            print("Returning non-JSON content as it contains useful information")
+                            return {"code": generated_content}
+                        else:
+                            # Create a simple JSON structure with the error and content
+                            fallback_json = {
+                                "Problem Information": "Error in JSON generation",
+                                "Explanation": "BRUTE FORCE APPROACH:\nThe model failed to generate valid JSON.\n\nBETTER APPROACH:\nHere is the raw output.\n\nOPTIMAL APPROACH:\nPlease try again with a simpler problem.",
+                                "Code": f"```{language}\n{generated_content}\n```",
+                                "Time Complexity": "N/A",
+                                "Space Complexity": "N/A",
+                                "complexity_explanation": "N/A"
+                            }
+                            return {"code": json.dumps(fallback_json, indent=2)}
+
+                    # Try again with a more explicit prompt
+                    prompt_text += "\n\nYour previous response was not valid JSON. Please ensure you return ONLY a valid JSON object with no additional text."
+                    gen_attempt += 1
+                    continue
+            else:
+                print(f"DeepSeek API returned an unexpected response format: {response}")
                 gen_attempt += 1
                 continue
 
@@ -540,85 +589,13 @@ async def generate_route(request: Request):
             print(f"Error generating code (attempt {gen_attempt+1}/{max_gen_retries}): {str(e)}")
             gen_attempt += 1
 
-            # If this is our last retry with the primary model, try a fallback model
-            if gen_attempt == max_gen_retries - 1:
-                print("Trying fallback model: deepseek-r1-distill-llama-70b")
-
-                # First try with Instructor if available
-                if INSTRUCTOR_AVAILABLE:
-                    try:
-                        print("Using Instructor with fallback model")
-                        # Create a patched client using Instructor with Groq
-                        from groq import Groq
-                        groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-                        patched_client = instructor.patch(groq_client)
-
-                        # Generate structured output directly with fallback model
-                        result = patched_client.chat.completions.create(
-                            model="deepseek-r1-distill-llama-70b",
-                            response_model=CodeSolution,
-                            messages=[
-                                {"role": "user", "content": prompt_text}
-                            ],
-                            temperature=0.1,
-                            max_tokens=4096
-                        )
-                        print("Instructor with fallback model succeeded")
-
-                        # Convert to JSON string with aliases
-                        fallback_content = json.dumps(result.model_dump(by_alias=True), indent=2)
-
-                        # Print the full generated content for debugging
-                        print("\n\nFULL GENERATED JSON OUTPUT (FALLBACK MODEL):")
-                        print(fallback_content)
-                        print("\n\n")
-
-                        # Also print the Explanation field specifically
-                        parsed = json.loads(fallback_content)
-                        print("EXPLANATION FIELD (FALLBACK MODEL):")
-                        print(repr(parsed.get("Explanation", "")))  # Use repr to show escape sequences
-                        print("\n\n")
-
-                        return {"code": fallback_content}
-                    except Exception as instructor_fallback_err:
-                        print(f"Instructor with fallback model failed: {str(instructor_fallback_err)}")
-                        print("Falling back to standard fallback approach")
-
-                # Standard fallback approach
-                try:
-                    # Create a fallback LLM with a different model
-                    fallback_llm = ChatGroq(
-                        model_name="deepseek-r1-distill-llama-70b",  # Fallback model
-                        temperature=0.1,
-                        max_tokens=4096,
-                        model_kwargs={
-                            "response_format": {"type": "json_object"},
-                            "top_p": 0.95
-                        },
-                        groq_api_key=os.getenv("GROQ_API_KEY")
-                    )
-
-                    # Try with the fallback model
-                    fallback_response = fallback_llm.invoke(prompt_text)
-                    fallback_content = fallback_response.content
-
-                    # Validate JSON
-                    try:
-                        json.loads(fallback_content)
-                        print("Fallback model succeeded")
-                        return {"code": fallback_content}
-                    except json.JSONDecodeError:
-                        print("Fallback model also produced invalid JSON")
-                except Exception as fallback_err:
-                    print(f"Fallback model error: {str(fallback_err)}")
-
             # If we've exhausted all options, return an error
             if gen_attempt == max_gen_retries:
                 # Create a simple error JSON
                 error_json = {
-                    "Problem Information": {"title": "Error in code generation", "description": body['problemInfo']},
-                    "Explanation": f"An error occurred: {str(e)}",
-                    "Code": "// Error in code generation",
+                    "Problem Information": "Error in code generation",
+                    "Explanation": f"BRUTE FORCE APPROACH:\nAn error occurred: {str(e)}\n\nBETTER APPROACH:\nPlease try again.\n\nOPTIMAL APPROACH:\nConsider simplifying the problem.",
+                    "Code": f"```{language}\n// Error in code generation\n```",
                     "Time Complexity": "N/A",
                     "Space Complexity": "N/A",
                     "complexity_explanation": "N/A"
@@ -626,7 +603,9 @@ async def generate_route(request: Request):
                 return {"code": json.dumps(error_json, indent=2)}
 
             # Wait before retrying
-            time.sleep(2)
+            wait_time = 2 * (2 ** (gen_attempt - 1))  # Exponential backoff
+            print(f"Waiting {wait_time} seconds before retry...")
+            time.sleep(wait_time)
             continue
 
     # This should never be reached due to the error handling above
@@ -839,40 +818,77 @@ async def debug_route(request: Request):
     # Keep trying until we succeed or exhaust all retries
     while not chat_completed:
         try:
-            # Try to use Instructor for structured generation if available
-            if INSTRUCTOR_AVAILABLE and DebugSolution is not None:
-                try:
-                    print("Using Instructor for structured debug analysis")
-                    # Create a patched client using Instructor with Groq
-                    from groq import Groq
-                    groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-                    patched_client = instructor.patch(groq_client)
+            # Try to use DeepSeek API directly for debug analysis
+            try:
+                print("Using DeepSeek API directly for debug analysis")
 
-                    # Generate structured output directly
-                    result = patched_client.chat.completions.create(
-                        model="deepseek-r1-distill-llama-70b",  # Using a more capable model for debugging
-                        response_model=DebugSolution,
-                        messages=[
-                            {"role": "user", "content": debug_prompt}
-                        ],
-                        temperature=0.1,
-                        max_tokens=4096
-                    )
-                    print("Instructor debug analysis succeeded")
+                # Call DeepSeek API
+                response = call_deepseek_api(
+                    prompt=debug_prompt,
+                    model="deepseek-coder",
+                    temperature=0.1,
+                    max_tokens=4096,
+                    response_format={"type": "json_object"}
+                )
 
-                    # Get the model data as a dictionary
-                    debug_content = result.model_dump()
+                # Extract the content from the response
+                if "choices" in response and len(response["choices"]) > 0:
+                    response_content = response["choices"][0]["message"]["content"]
+                    print(f"DeepSeek debug analysis succeeded")
+                    print(f"Raw debug response content: {response_content[:200]}...")
 
-                    # If we get here, the chat completed successfully
-                    chat_completed = True
-                    return debug_content
+                    # Try to parse the JSON response
+                    try:
+                        response_dict = json.loads(response_content)
 
-                except Exception as instructor_err:
-                    print(f"Instructor debug analysis failed: {str(instructor_err)}")
-                    print("Falling back to standard generation")
-                    # Fall back to standard generation
+                        # Validate that the response has the required keys
+                        required_keys = ["code", "debug_analysis", "thoughts", "time_complexity",
+                                        "space_complexity", "time_complexity_explanation",
+                                        "space_complexity_explanation"]
 
-            # Standard approach using Mistral
+                        missing_keys = [key for key in required_keys if key not in response_dict]
+
+                        if missing_keys:
+                            print(f"Missing required keys in debug response: {missing_keys}")
+                            # Try to create a valid response with default values for missing keys
+                            for key in missing_keys:
+                                if key == "thoughts":
+                                    response_dict[key] = ["Could not generate detailed thoughts"]
+                                elif key == "code":
+                                    # Try to extract code from the OCR text
+                                    code_blocks = []
+                                    for result in all_ocr_results:
+                                        text = result["text"]
+                                        if "```" in text:
+                                            # Extract code blocks
+                                            code_start = text.find("```")
+                                            code_end = text.rfind("```")
+                                            if code_start != -1 and code_end != -1 and code_end > code_start + 3:
+                                                code_blocks.append(text[code_start:code_end+3])
+
+                                    if code_blocks:
+                                        response_dict[key] = "\n".join(code_blocks)
+                                    else:
+                                        response_dict[key] = "Could not extract code from the debug information"
+                                else:
+                                    response_dict[key] = "Not available"
+
+                        # If we get here, the chat completed successfully
+                        chat_completed = True
+                        return response_dict
+
+                    except json.JSONDecodeError as json_err:
+                        print(f"JSON decode error in DeepSeek debug response: {json_err}")
+                        print(f"Raw debug content: {response_content[:200]}...")
+                        # Fall back to Mistral
+                else:
+                    print(f"DeepSeek API returned an unexpected response format for debug analysis")
+                    # Fall back to Mistral
+            except Exception as deepseek_err:
+                print(f"DeepSeek debug analysis failed: {str(deepseek_err)}")
+                print("Falling back to Mistral for debug analysis")
+
+            # Standard approach using Mistral as fallback
             chat_response = client.chat.complete(
                 model="pixtral-12b-latest",
                 messages=[
