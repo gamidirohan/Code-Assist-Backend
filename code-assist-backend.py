@@ -45,7 +45,7 @@ MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 client = Mistral(api_key=MISTRAL_API_KEY)
 
 # Configure DeepSeek API
-DEEPSEEK_API_KEY = "sk-f4c9e265c5054bc2b382f9141710583e"
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 
 # DeepSeek API headers
