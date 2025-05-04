@@ -7,7 +7,7 @@ import httpx
 import base64
 from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException
-from mistralai import Mistral, ImageURLChunk, TextChunk
+from mistralai import Mistral, TextChunk
 from mistralai.models.sdkerror import SDKError
 from langchain_groq import ChatGroq
 
@@ -69,7 +69,7 @@ client = Mistral(api_key=MISTRAL_API_KEY)
 
 # Configure the LLM for code generation
 groq_llm = ChatGroq(
-    model_name="llama-3.1-8b-instant",  # Using an available model on Groq
+    model_name="deepseek-r1-distill-llama-70b",  # Using DeepSeek model as primary for better code generation
     temperature=0.1,  # Slight temperature for creativity while maintaining reliability
     max_tokens=4096,  # Ensure we have enough tokens for comprehensive solutions
     model_kwargs={
@@ -116,58 +116,42 @@ async def extract_route(request: Request):
 
         while not image_processed:
             try:
-                # Run OCR on this image
+                # Use Mistral's vision model directly to extract text from the image
                 try:
-                    # Step 1: Process the image with Mistral OCR
-                    image_response = client.ocr.process(
-                        document=ImageURLChunk(image_url=f"data:image/jpeg;base64,{base64_data}"),
-                        model="mistral-ocr-latest"
+                    print(f"Processing image {i+1} with Mistral vision model directly")
+
+                    # Use Mistral's vision model to extract text from the image
+                    vision_response = client.chat.complete(
+                        model="pixtral-12b-latest",
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": f"data:image/jpeg;base64,{base64_data}"
+                                        }
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": "This is a screenshot of a coding problem. Extract ALL text from this image with perfect accuracy, preserving the exact formatting. Pay special attention to:\n\n1. Problem title and difficulty level\n2. Complete problem description with ALL details\n3. ALL examples with their inputs, outputs, and explanations\n4. ALL constraints and edge cases (e.g., array size limits, value ranges)\n5. Time and space complexity requirements\n6. Any code templates or function signatures\n\nFormat your response as plain text without any additional commentary. Include EVERY number, symbol, and special character exactly as shown. Do not summarize or paraphrase anything - extract the EXACT text as it appears."
+                                    }
+                                ]
+                            }
+                        ],
+                        temperature=0
                     )
 
-                    # Get the OCR markdown result
-                    image_ocr_md = image_response.pages[0].markdown
-                    print(f"OCR markdown for image {i+1}: {image_ocr_md[:100]}...")
+                    # Extract the text from the vision model response
+                    extracted_text = vision_response.choices[0].message.content
 
-                    # Step 2: If the OCR result is just an image reference or seems to be code-related,
-                    # use Mistral's vision model. OCR works well for receipts and documents but often
-                    # returns only image references for code screenshots.
-                    if (image_ocr_md.startswith("![") and len(image_ocr_md.split()) <= 2) or "```" in image_ocr_md:
-                        print(f"Mistral OCR returned only an image reference or code content for image {i+1}. Using Mistral vision model...")
-
-                        try:
-                            # Use Mistral's vision model to extract text from the image
-                            vision_response = client.chat.complete(
-                                model="pixtral-12b-latest",
-                                messages=[
-                                    {
-                                        "role": "user",
-                                        "content": [
-                                            {
-                                                "type": "image_url",
-                                                "image_url": {
-                                                    "url": f"data:image/jpeg;base64,{base64_data}"
-                                                }
-                                            },
-                                            {
-                                                "type": "text",
-                                                "text": "This is a screenshot of a coding problem. Extract ALL text from this image with perfect accuracy, preserving the exact formatting. Pay special attention to:\n\n1. Problem title and difficulty level\n2. Complete problem description with ALL details\n3. ALL examples with their inputs, outputs, and explanations\n4. ALL constraints and edge cases (e.g., array size limits, value ranges)\n5. Time and space complexity requirements\n6. Any code templates or function signatures\n\nFormat your response as plain text without any additional commentary. Include EVERY number, symbol, and special character exactly as shown. Do not summarize or paraphrase anything - extract the EXACT text as it appears."
-                                            }
-                                        ]
-                                    }
-                                ],
-                                temperature=0
-                            )
-
-                            # Extract the text from the vision model response
-                            extracted_text = vision_response.choices[0].message.content
-
-                            if extracted_text and len(extracted_text) > 20:
-                                print(f"Successfully extracted text using vision model for image {i+1}")
-                                image_ocr_md = extracted_text
-                            else:
-                                print(f"Vision model returned insufficient text for image {i+1}")
-                        except Exception as vision_err:
-                            print(f"Error using vision model for image {i+1}: {str(vision_err)}")
+                    if extracted_text and len(extracted_text) > 20:
+                        print(f"Successfully extracted text using vision model for image {i+1}")
+                        image_ocr_md = extracted_text
+                    else:
+                        print(f"Vision model returned insufficient text for image {i+1}")
+                        raise Exception("Vision model returned insufficient text")
 
                     print(f"Successfully processed image {i+1}")
                     all_ocr_results.append({
@@ -177,11 +161,11 @@ async def extract_route(request: Request):
                     # Successfully processed this image
                     image_processed = True
 
-                except SDKError as ocr_err:
-                    if "Requests rate limit exceeded" in str(ocr_err):
+                except SDKError as vision_err:
+                    if "Requests rate limit exceeded" in str(vision_err):
                         rate_limit_attempt += 1
                         wait_time = initial_wait_time * (2 ** (rate_limit_attempt - 1))  # Exponential backoff
-                        print(f"OCR rate limit exceeded for image {i+1}, attempt {rate_limit_attempt}/{max_rate_limit_retries}. Waiting {wait_time} seconds...")
+                        print(f"Vision model rate limit exceeded for image {i+1}, attempt {rate_limit_attempt}/{max_rate_limit_retries}. Waiting {wait_time} seconds...")
 
                         if rate_limit_attempt >= max_rate_limit_retries:
                             print(f"Failed to process image {i+1} after {max_rate_limit_retries} rate limit retries.")
@@ -200,7 +184,7 @@ async def extract_route(request: Request):
                         time.sleep(wait_time)
                         continue
                     else:
-                        raise ocr_err
+                        raise vision_err
 
             except HTTPException:
                 # Re-raise HTTP exceptions
@@ -708,58 +692,42 @@ async def debug_route(request: Request):
 
         while not image_processed:
             try:
-                # Run OCR on this image
+                # Use Mistral's vision model directly to extract text from the image
                 try:
-                    # Step 1: Process the image with Mistral OCR
-                    image_response = client.ocr.process(
-                        document=ImageURLChunk(image_url=f"data:image/jpeg;base64,{base64_data}"),
-                        model="mistral-ocr-latest"
+                    print(f"Processing debug image {i+1} with Mistral vision model directly")
+
+                    # Use Mistral's vision model to extract text from the image
+                    vision_response = client.chat.complete(
+                        model="pixtral-12b-latest",
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": f"data:image/jpeg;base64,{base64_data}"
+                                        }
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": "This is a screenshot of code with possible error messages or test cases. Extract ALL text from this image with perfect accuracy, preserving the exact formatting. Pay special attention to:\n\n1. The code implementation\n2. Any error messages or stack traces\n3. Test cases and their inputs/outputs\n4. Any failure messages or debugging information\n5. Any comments or annotations\n\nFormat your response as plain text without any additional commentary. Include EVERY number, symbol, and special character exactly as shown. Do not summarize or paraphrase anything - extract the EXACT text as it appears."
+                                    }
+                                ]
+                            }
+                        ],
+                        temperature=0
                     )
 
-                    # Get the OCR markdown result
-                    image_ocr_md = image_response.pages[0].markdown
-                    print(f"OCR markdown for debug image {i+1}: {image_ocr_md[:100]}...")
+                    # Extract the text from the vision model response
+                    extracted_text = vision_response.choices[0].message.content
 
-                    # Step 2: If the OCR result is just an image reference or seems to be code-related,
-                    # use Mistral's vision model. OCR works well for receipts and documents but often
-                    # returns only image references for code screenshots.
-                    if (image_ocr_md.startswith("![") and len(image_ocr_md.split()) <= 2) or "```" in image_ocr_md:
-                        print(f"Mistral OCR returned only an image reference or code content for debug image {i+1}. Using Mistral vision model...")
-
-                        try:
-                            # Use Mistral's vision model to extract text from the image
-                            vision_response = client.chat.complete(
-                                model="pixtral-12b-latest",
-                                messages=[
-                                    {
-                                        "role": "user",
-                                        "content": [
-                                            {
-                                                "type": "image_url",
-                                                "image_url": {
-                                                    "url": f"data:image/jpeg;base64,{base64_data}"
-                                                }
-                                            },
-                                            {
-                                                "type": "text",
-                                                "text": "This is a screenshot of code with possible error messages or test cases. Extract ALL text from this image with perfect accuracy, preserving the exact formatting. Pay special attention to:\n\n1. The code implementation\n2. Any error messages or stack traces\n3. Test cases and their inputs/outputs\n4. Any failure messages or debugging information\n5. Any comments or annotations\n\nFormat your response as plain text without any additional commentary. Include EVERY number, symbol, and special character exactly as shown. Do not summarize or paraphrase anything - extract the EXACT text as it appears."
-                                            }
-                                        ]
-                                    }
-                                ],
-                                temperature=0
-                            )
-
-                            # Extract the text from the vision model response
-                            extracted_text = vision_response.choices[0].message.content
-
-                            if extracted_text and len(extracted_text) > 20:
-                                print(f"Successfully extracted text using vision model for debug image {i+1}")
-                                image_ocr_md = extracted_text
-                            else:
-                                print(f"Vision model returned insufficient text for debug image {i+1}")
-                        except Exception as vision_err:
-                            print(f"Error using vision model for debug image {i+1}: {str(vision_err)}")
+                    if extracted_text and len(extracted_text) > 20:
+                        print(f"Successfully extracted text using vision model for debug image {i+1}")
+                        image_ocr_md = extracted_text
+                    else:
+                        print(f"Vision model returned insufficient text for debug image {i+1}")
+                        raise Exception("Vision model returned insufficient text")
 
                     print(f"Successfully processed debug image {i+1}")
                     all_ocr_results.append({
@@ -769,11 +737,11 @@ async def debug_route(request: Request):
                     # Successfully processed this image
                     image_processed = True
 
-                except SDKError as ocr_err:
-                    if "Requests rate limit exceeded" in str(ocr_err):
+                except SDKError as vision_err:
+                    if "Requests rate limit exceeded" in str(vision_err):
                         rate_limit_attempt += 1
                         wait_time = initial_wait_time * (2 ** (rate_limit_attempt - 1))  # Exponential backoff
-                        print(f"OCR rate limit exceeded for debug image {i+1}, attempt {rate_limit_attempt}/{max_rate_limit_retries}. Waiting {wait_time} seconds...")
+                        print(f"Vision model rate limit exceeded for debug image {i+1}, attempt {rate_limit_attempt}/{max_rate_limit_retries}. Waiting {wait_time} seconds...")
 
                         if rate_limit_attempt >= max_rate_limit_retries:
                             print(f"Failed to process debug image {i+1} after {max_rate_limit_retries} rate limit retries.")
@@ -792,7 +760,7 @@ async def debug_route(request: Request):
                         time.sleep(wait_time)
                         continue
                     else:
-                        raise ocr_err
+                        raise vision_err
 
             except HTTPException:
                 # Re-raise HTTP exceptions
