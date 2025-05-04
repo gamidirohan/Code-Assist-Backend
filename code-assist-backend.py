@@ -11,6 +11,8 @@ from mistralai import Mistral, TextChunk
 from mistralai.models.sdkerror import SDKError
 # Import DeepSeek AI client
 import requests
+# Import Groq for fallback
+from langchain_groq import ChatGroq
 
 # Define the expected response structure for code generation
 """
@@ -43,7 +45,6 @@ dotenv.load_dotenv()
 
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 client = Mistral(api_key=MISTRAL_API_KEY)
-
 # Configure DeepSeek API
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
@@ -480,53 +481,135 @@ async def generate_route(request: Request):
             # If parsing fails, use the original problem_info
             pass
 
-    # Try to use DeepSeek API directly first
+    # Cascading fallback mechanism for code generation
+    # Step 1: Try DeepSeek API directly first
+    deepseek_api_success = False
     try:
-        print("Using DeepSeek API directly for code generation")
+        if DEEPSEEK_API_KEY:
+            print("STEP 1: Using DeepSeek API directly for code generation")
 
-        # Call DeepSeek API
-        response = call_deepseek_api(
-            prompt=prompt_text,
-            model="deepseek-coder",
-            temperature=0.1,
-            max_tokens=4096,
-            response_format={"type": "json_object"}
-        )
+            # Call DeepSeek API
+            response = call_deepseek_api(
+                prompt=prompt_text,
+                model="deepseek-coder",
+                temperature=0.1,
+                max_tokens=4096,
+                response_format={"type": "json_object"}
+            )
 
-        # Extract the content from the response
-        if "choices" in response and len(response["choices"]) > 0:
-            generated_content = response["choices"][0]["message"]["content"]
-            print("DeepSeek generation succeeded")
+            # Extract the content from the response
+            if "choices" in response and len(response["choices"]) > 0:
+                generated_content = response["choices"][0]["message"]["content"]
+                print("DeepSeek generation succeeded")
+
+                # Try to parse as JSON to validate
+                try:
+                    # Validate that it's valid JSON
+                    parsed = json.loads(generated_content)
+
+                    # Print the full generated content for debugging
+                    print("\n\nFULL GENERATED JSON OUTPUT:")
+                    print(generated_content[:500] + "..." if len(generated_content) > 500 else generated_content)
+                    print("\n\n")
+
+                    # Also print the Explanation field specifically if it exists
+                    if "Explanation" in parsed:
+                        print("EXPLANATION FIELD:")
+                        explanation = parsed.get("Explanation", "")
+                        print(repr(explanation[:500] + "..." if len(explanation) > 500 else explanation))  # Use repr to show escape sequences
+                        print("\n\n")
+
+                    deepseek_api_success = True
+                    return {"code": generated_content}
+                except json.JSONDecodeError as json_err:
+                    print(f"JSON validation failed: {str(json_err)}")
+                    print("Falling back to Groq's DeepSeek model")
+            else:
+                print("DeepSeek API returned an unexpected response format")
+                print("Falling back to Groq's DeepSeek model")
+        else:
+            print("DeepSeek API key not available")
+            print("Falling back to Groq's DeepSeek model")
+    except Exception as e:
+        print(f"DeepSeek direct generation failed: {str(e)}")
+        print("Falling back to Groq's DeepSeek model")
+
+    # Step 2: If DeepSeek API fails, try Groq's DeepSeek model
+    groq_success = False
+    if not deepseek_api_success and os.getenv("GROQ_API_KEY"):
+        try:
+            print("STEP 2: Using Groq's DeepSeek model for code generation")
+
+            # Configure Groq with DeepSeek model
+            groq_llm = ChatGroq(
+                model_name="deepseek-r1-distill-llama-70b",  # Using DeepSeek model through Groq
+                temperature=0.1,
+                max_tokens=4096,
+                model_kwargs={
+                    "response_format": {"type": "json_object"},
+                    "top_p": 0.95
+                },
+                groq_api_key=os.getenv("GROQ_API_KEY")
+            )
+
+            # Call the Groq LLM
+            groq_response = groq_llm.invoke(prompt_text)
+            print("Groq generation succeeded")
+
+            # Extract content
+            generated_content = groq_response.content
 
             # Try to parse as JSON to validate
             try:
                 # Validate that it's valid JSON
-                parsed = json.loads(generated_content)
-
-                # Print the full generated content for debugging
-                print("\n\nFULL GENERATED JSON OUTPUT:")
-                print(generated_content[:500] + "..." if len(generated_content) > 500 else generated_content)
-                print("\n\n")
-
-                # Also print the Explanation field specifically if it exists
-                if "Explanation" in parsed:
-                    print("EXPLANATION FIELD:")
-                    explanation = parsed.get("Explanation", "")
-                    print(repr(explanation[:500] + "..." if len(explanation) > 500 else explanation))  # Use repr to show escape sequences
-                    print("\n\n")
-
+                json.loads(generated_content)
+                groq_success = True
                 return {"code": generated_content}
             except json.JSONDecodeError as json_err:
-                print(f"JSON validation failed: {str(json_err)}")
-                print("Falling back to standard generation")
-                # Fall back to standard generation
-        else:
-            print("DeepSeek API returned an unexpected response format")
-            print("Falling back to standard generation")
-    except Exception as e:
-        print(f"DeepSeek direct generation failed: {str(e)}")
-        print("Falling back to standard generation")
-        # Fall back to standard generation
+                print(f"Groq JSON validation failed: {str(json_err)}")
+                print("Falling back to Mistral's Pixtral model")
+        except Exception as e:
+            print(f"Groq generation failed: {str(e)}")
+            print("Falling back to Mistral's Pixtral model")
+    elif not deepseek_api_success:
+        print("Groq API key not available")
+        print("Falling back to Mistral's Pixtral model")
+
+    # Step 3: If both DeepSeek and Groq fail, try Mistral's Pixtral model
+    if not deepseek_api_success and not groq_success:
+        try:
+            print("STEP 3: Using Mistral's Pixtral model for code generation")
+
+            # Call Mistral's Pixtral model
+            mistral_response = client.chat.complete(
+                model="pixtral-12b-latest",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt_text
+                    }
+                ],
+                response_format={"type": "json_object"},
+                temperature=0
+            )
+
+            # Extract content
+            generated_content = mistral_response.choices[0].message.content
+            print("Mistral generation succeeded")
+
+            # Try to parse as JSON to validate
+            try:
+                # Validate that it's valid JSON
+                json.loads(generated_content)
+                return {"code": generated_content}
+            except json.JSONDecodeError as json_err:
+                print(f"Mistral JSON validation failed: {str(json_err)}")
+                print("All models failed to generate valid JSON, falling back to standard generation")
+        except Exception as e:
+            print(f"Mistral generation failed: {str(e)}")
+            print("All models failed, falling back to standard generation")
+
+    # If all direct attempts fail, fall back to standard generation with retries
 
     # Standard generation approach using DeepSeek API directly
     while gen_attempt < max_gen_retries:
@@ -818,24 +901,107 @@ async def debug_route(request: Request):
     # Keep trying until we succeed or exhaust all retries
     while not chat_completed:
         try:
-            # Try to use DeepSeek API directly for debug analysis
+            # Cascading fallback mechanism for debug analysis
+            # Step 1: Try DeepSeek API directly first
+            deepseek_api_success = False
             try:
-                print("Using DeepSeek API directly for debug analysis")
+                if DEEPSEEK_API_KEY:
+                    print("STEP 1: Using DeepSeek API directly for debug analysis")
 
-                # Call DeepSeek API
-                response = call_deepseek_api(
-                    prompt=debug_prompt,
-                    model="deepseek-coder",
-                    temperature=0.1,
-                    max_tokens=4096,
-                    response_format={"type": "json_object"}
-                )
+                    # Call DeepSeek API
+                    response = call_deepseek_api(
+                        prompt=debug_prompt,
+                        model="deepseek-coder",
+                        temperature=0.1,
+                        max_tokens=4096,
+                        response_format={"type": "json_object"}
+                    )
 
-                # Extract the content from the response
-                if "choices" in response and len(response["choices"]) > 0:
-                    response_content = response["choices"][0]["message"]["content"]
-                    print(f"DeepSeek debug analysis succeeded")
-                    print(f"Raw debug response content: {response_content[:200]}...")
+                    # Extract the content from the response
+                    if "choices" in response and len(response["choices"]) > 0:
+                        response_content = response["choices"][0]["message"]["content"]
+                        print(f"DeepSeek debug analysis succeeded")
+                        print(f"Raw debug response content: {response_content[:200]}...")
+
+                        # Try to parse the JSON response
+                        try:
+                            response_dict = json.loads(response_content)
+
+                            # Validate that the response has the required keys
+                            required_keys = ["code", "debug_analysis", "thoughts", "time_complexity",
+                                            "space_complexity", "time_complexity_explanation",
+                                            "space_complexity_explanation"]
+
+                            missing_keys = [key for key in required_keys if key not in response_dict]
+
+                            if missing_keys:
+                                print(f"Missing required keys in debug response: {missing_keys}")
+                                # Try to create a valid response with default values for missing keys
+                                for key in missing_keys:
+                                    if key == "thoughts":
+                                        response_dict[key] = ["Could not generate detailed thoughts"]
+                                    elif key == "code":
+                                        # Try to extract code from the OCR text
+                                        code_blocks = []
+                                        for result in all_ocr_results:
+                                            text = result["text"]
+                                            if "```" in text:
+                                                # Extract code blocks
+                                                code_start = text.find("```")
+                                                code_end = text.rfind("```")
+                                                if code_start != -1 and code_end != -1 and code_end > code_start + 3:
+                                                    code_blocks.append(text[code_start:code_end+3])
+
+                                        if code_blocks:
+                                            response_dict[key] = "\n".join(code_blocks)
+                                        else:
+                                            response_dict[key] = "Could not extract code from the debug information"
+                                    else:
+                                        response_dict[key] = "Not available"
+
+                            # If we get here, the chat completed successfully
+                            deepseek_api_success = True
+                            chat_completed = True
+                            return response_dict
+
+                        except json.JSONDecodeError as json_err:
+                            print(f"JSON decode error in DeepSeek debug response: {json_err}")
+                            print(f"Raw debug content: {response_content[:200]}...")
+                            print("Falling back to Groq's DeepSeek model")
+                    else:
+                        print(f"DeepSeek API returned an unexpected response format for debug analysis")
+                        print("Falling back to Groq's DeepSeek model")
+                else:
+                    print("DeepSeek API key not available")
+                    print("Falling back to Groq's DeepSeek model")
+            except Exception as deepseek_err:
+                print(f"DeepSeek debug analysis failed: {str(deepseek_err)}")
+                print("Falling back to Groq's DeepSeek model")
+
+            # Step 2: If DeepSeek API fails, try Groq's DeepSeek model
+            groq_success = False
+            if not deepseek_api_success and os.getenv("GROQ_API_KEY"):
+                try:
+                    print("STEP 2: Using Groq's DeepSeek model for debug analysis")
+
+                    # Configure Groq with DeepSeek model
+                    groq_llm = ChatGroq(
+                        model_name="deepseek-r1-distill-llama-70b",  # Using DeepSeek model through Groq
+                        temperature=0.1,
+                        max_tokens=4096,
+                        model_kwargs={
+                            "response_format": {"type": "json_object"},
+                            "top_p": 0.95
+                        },
+                        groq_api_key=os.getenv("GROQ_API_KEY")
+                    )
+
+                    # Call the Groq LLM
+                    groq_response = groq_llm.invoke(debug_prompt)
+                    print("Groq debug analysis succeeded")
+
+                    # Extract content
+                    response_content = groq_response.content
 
                     # Try to parse the JSON response
                     try:
@@ -849,7 +1015,7 @@ async def debug_route(request: Request):
                         missing_keys = [key for key in required_keys if key not in response_dict]
 
                         if missing_keys:
-                            print(f"Missing required keys in debug response: {missing_keys}")
+                            print(f"Missing required keys in Groq debug response: {missing_keys}")
                             # Try to create a valid response with default values for missing keys
                             for key in missing_keys:
                                 if key == "thoughts":
@@ -873,33 +1039,35 @@ async def debug_route(request: Request):
                                 else:
                                     response_dict[key] = "Not available"
 
-                        # If we get here, the chat completed successfully
+                        groq_success = True
                         chat_completed = True
                         return response_dict
-
                     except json.JSONDecodeError as json_err:
-                        print(f"JSON decode error in DeepSeek debug response: {json_err}")
-                        print(f"Raw debug content: {response_content[:200]}...")
-                        # Fall back to Mistral
-                else:
-                    print(f"DeepSeek API returned an unexpected response format for debug analysis")
-                    # Fall back to Mistral
-            except Exception as deepseek_err:
-                print(f"DeepSeek debug analysis failed: {str(deepseek_err)}")
-                print("Falling back to Mistral for debug analysis")
+                        print(f"Groq JSON validation failed: {str(json_err)}")
+                        print("Falling back to Mistral's Pixtral model")
+                except Exception as e:
+                    print(f"Groq debug analysis failed: {str(e)}")
+                    print("Falling back to Mistral's Pixtral model")
+            elif not deepseek_api_success:
+                print("Groq API key not available")
+                print("Falling back to Mistral's Pixtral model")
 
-            # Standard approach using Mistral as fallback
-            chat_response = client.chat.complete(
-                model="pixtral-12b-latest",
-                messages=[
-                    {
-                        "role": "user",
-                        "content": debug_prompt
-                    },
-                ],
-                response_format={"type": "json_object"},
-                temperature=0
-            )
+            # Step 3: If both DeepSeek and Groq fail, use Mistral as final fallback
+            if not deepseek_api_success and not groq_success:
+                print("STEP 3: Using Mistral's Pixtral model for debug analysis")
+
+                # Standard approach using Mistral as final fallback
+                chat_response = client.chat.complete(
+                    model="pixtral-12b-latest",
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": debug_prompt
+                        },
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0
+                )
 
             # If we get here, the chat completed successfully
             chat_completed = True
