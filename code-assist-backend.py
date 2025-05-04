@@ -128,9 +128,11 @@ async def extract_route(request: Request):
                     image_ocr_md = image_response.pages[0].markdown
                     print(f"OCR markdown for image {i+1}: {image_ocr_md[:100]}...")
 
-                    # Step 2: If the OCR result is just an image reference, use Mistral's vision model
-                    if image_ocr_md.startswith("![") and image_ocr_md.endswith(")") and len(image_ocr_md.split()) <= 2:
-                        print(f"Mistral OCR returned only an image reference for image {i+1}. Using Mistral vision model...")
+                    # Step 2: If the OCR result is just an image reference or seems to be code-related,
+                    # use Mistral's vision model. OCR works well for receipts and documents but often
+                    # returns only image references for code screenshots.
+                    if (image_ocr_md.startswith("![") and len(image_ocr_md.split()) <= 2) or "```" in image_ocr_md:
+                        print(f"Mistral OCR returned only an image reference or code content for image {i+1}. Using Mistral vision model...")
 
                         try:
                             # Use Mistral's vision model to extract text from the image
@@ -459,6 +461,22 @@ async def generate_route(request: Request):
             groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
             patched_client = instructor.patch(groq_client)
 
+            # Check if the input is a nested JSON string that needs to be parsed
+            problem_info = body.get("problemInfo", "")
+            if isinstance(problem_info, str) and problem_info.startswith("{") and problem_info.endswith("}"):
+                try:
+                    # Try to parse the nested JSON
+                    parsed_problem = json.loads(problem_info)
+                    if isinstance(parsed_problem, dict) and "problemInfo" in parsed_problem:
+                        # Extract the actual problem info from the nested JSON
+                        problem_info = parsed_problem.get("problemInfo", "")
+                        print(f"Extracted nested problemInfo: {problem_info[:100]}...")
+                        # Update the body with the extracted problem info
+                        body["problemInfo"] = problem_info
+                except json.JSONDecodeError:
+                    # If parsing fails, use the original problem_info
+                    pass
+
             # Generate structured output directly
             result = patched_client.chat.completions.create(
                 model="llama-3.1-8b-instant",
@@ -650,6 +668,19 @@ async def debug_route(request: Request):
     problemInfo = body.get("problemInfo", "")
     language = body.get("language", "python")
 
+    # Check if problemInfo is a nested JSON string that needs to be parsed
+    if isinstance(problemInfo, str) and problemInfo.startswith("{") and problemInfo.endswith("}"):
+        try:
+            # Try to parse the nested JSON
+            parsed_problem = json.loads(problemInfo)
+            if isinstance(parsed_problem, dict) and "problemInfo" in parsed_problem:
+                # Extract the actual problem info from the nested JSON
+                problemInfo = parsed_problem.get("problemInfo", "")
+                print(f"Extracted nested problemInfo: {problemInfo[:100]}...")
+        except json.JSONDecodeError:
+            # If parsing fails, use the original problemInfo
+            pass
+
     # Validate request parameters
     if not imageDataList:
         raise HTTPException(status_code=400, detail="imageDataList cannot be empty.")
@@ -689,9 +720,11 @@ async def debug_route(request: Request):
                     image_ocr_md = image_response.pages[0].markdown
                     print(f"OCR markdown for debug image {i+1}: {image_ocr_md[:100]}...")
 
-                    # Step 2: If the OCR result is just an image reference, use Mistral's vision model
-                    if image_ocr_md.startswith("![") and image_ocr_md.endswith(")") and len(image_ocr_md.split()) <= 2:
-                        print(f"Mistral OCR returned only an image reference for debug image {i+1}. Using Mistral vision model...")
+                    # Step 2: If the OCR result is just an image reference or seems to be code-related,
+                    # use Mistral's vision model. OCR works well for receipts and documents but often
+                    # returns only image references for code screenshots.
+                    if (image_ocr_md.startswith("![") and len(image_ocr_md.split()) <= 2) or "```" in image_ocr_md:
+                        print(f"Mistral OCR returned only an image reference or code content for debug image {i+1}. Using Mistral vision model...")
 
                         try:
                             # Use Mistral's vision model to extract text from the image
